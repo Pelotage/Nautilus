@@ -34,7 +34,7 @@
 
 use nautilus_units::{DAYS_PER_YEAR, Micrometres};
 
-use super::dynamics::{N, SegmentRates, gains, ix, losses};
+use super::dynamics::{N, RATING_CAPACITY, SegmentRates, gains, ix, losses};
 use super::environment::Segment;
 use super::events::MaintenanceEvent;
 use super::integrate;
@@ -197,6 +197,26 @@ impl GuildModel {
         }
     }
 
+    /// Scales any class total that a solver step pushed above its hard limit back onto it
+    /// (slime 20, soft 50, hull and propeller coverage 100 %). This absorbs RK4 overshoot near
+    /// saturation. A NaN total fails the `>` test, so it is never hidden.
+    fn project_onto_limits(&mut self) {
+        let groups: [(&[usize], f64); 4] = [
+            (&ix::SLIME, RATING_CAPACITY[0]),
+            (&ix::SOFT, RATING_CAPACITY[1]),
+            (&[ix::CALC[0], ix::CALC[1], ix::DEAD], 100.0),
+            (&[ix::PROP_CALC[0], ix::PROP_CALC[1], ix::PROP_DEAD], 100.0),
+        ];
+        for (idx, limit) in groups {
+            let total: f64 = idx.iter().map(|&i| self.x[i]).sum();
+            if total > limit {
+                for &i in idx {
+                    self.x[i] *= limit / total;
+                }
+            }
+        }
+    }
+
     fn dry_dock(&mut self) {
         self.x = [0.0; N];
         self.just_cleaned = false;
@@ -215,6 +235,7 @@ impl FoulingModel for GuildModel {
         }
         let r = SegmentRates::new(seg, &self.params);
         integrate::advance(&mut self.x, dt, &losses(&r), |s| gains(s, &r));
+        self.project_onto_limits();
         let p = &self.params;
         self.ahr += p.ahr_drift_per_year.value() * dt / DAYS_PER_YEAR;
         let rough = self.prop_rough + p.prop_drift_per_year.value() * dt / DAYS_PER_YEAR;
@@ -625,5 +646,29 @@ mod tests {
             calcareous_remnant: 0.2,
         });
         assert_eq!(s, once);
+    }
+    /// Ratings and coverage never exceed their hard limits (slime 20, soft 50, coverage 100 %),
+    /// even when fast, well-fed growth makes an RK4 step overshoot near capacity.
+    #[test]
+    fn saturation_never_overshoots_limits() {
+        use nautilus_units::MilligramsPerCubicMetre;
+        let mut s = GuildModel::new(GuildParams {
+            food_alpha: 0.5,
+            ..GuildParams::default()
+        })
+        .unwrap();
+        let day = idle(1.0, 29.0)
+            .with_chlorophyll(MilligramsPerCubicMetre(3.0))
+            .unwrap();
+        for _ in 0..1500 {
+            s.advance(&day);
+            assert!(
+                s.slime_rating() <= 20.0 && s.soft_rating() <= 50.0,
+                "{} {}",
+                s.slime_rating(),
+                s.soft_rating()
+            );
+            assert!(s.calcareous_coverage() <= 100.0);
+        }
     }
 }

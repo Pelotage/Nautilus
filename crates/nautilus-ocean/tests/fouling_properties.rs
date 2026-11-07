@@ -289,3 +289,70 @@ fn long_random_history_keeps_invariants() {
         }
     });
 }
+
+/// 20,000 random world segments (−2–34 °C, 0–38 PSU, 0–20 kn, any port, chlorophyll 0–20 mg/m³
+/// on half of them) with maintenance events mixed in (about 1 in 20), for the guild model.
+/// After every step: penalties finite and non-negative, power factor ≥ 1, slime ≤ 20,
+/// soft ≤ 50, live + dead coverage ≤ 100 %, and no event makes the hull or propeller rougher.
+#[test]
+fn long_random_history_guild_model() {
+    use nautilus_ocean::fouling::guild_model::GuildModel;
+    use nautilus_ocean::fouling::params::GuildParams;
+    use nautilus_units::MilligramsPerCubicMetre;
+    let mut rng = Rng(107);
+    with_tanker(|op| {
+        for p in [
+            GuildParams::default(),
+            GuildParams {
+                food_alpha: 0.5,
+                ..GuildParams::default()
+            },
+        ] {
+            let mut m = GuildModel::new(p).unwrap();
+            for step in 0..20_000 {
+                if rng.index(20) == 0 {
+                    let event = match rng.index(5) {
+                        0 => MaintenanceEvent::DryDockFullBlast,
+                        1 => MaintenanceEvent::DryDockSpotRepair,
+                        2 => MaintenanceEvent::InWaterHullClean {
+                            calcareous_remnant: rng.uniform(0.0, 1.0),
+                        },
+                        3 => MaintenanceEvent::HullGrooming,
+                        _ => MaintenanceEvent::PropellerPolish,
+                    };
+                    let (h, pk) = (m.hull_ks(), m.prop_ks());
+                    m.apply(event);
+                    assert!(
+                        m.hull_ks() <= h && m.prop_ks() <= pk,
+                        "step {step} {event:?}"
+                    );
+                } else {
+                    let mut seg = random_segment(&mut rng);
+                    if rng.index(2) == 0 {
+                        seg = seg
+                            .with_chlorophyll(MilligramsPerCubicMetre(rng.uniform(0.0, 20.0)))
+                            .unwrap();
+                    }
+                    m.advance(&seg);
+                }
+                assert!(
+                    m.slime_rating() <= 20.0 && m.soft_rating() <= 50.0,
+                    "step {step}"
+                );
+                assert!(
+                    m.calcareous_coverage() <= 100.0 && m.live_coverage() >= 0.0,
+                    "step {step}"
+                );
+                let pen = m.power_penalty(op);
+                for v in [
+                    pen.hull_fouling_fraction,
+                    pen.coating_fraction,
+                    pen.propeller_eta_loss,
+                ] {
+                    assert!(v.is_finite() && v >= 0.0, "step {step}: {pen:?}");
+                }
+                assert!(pen.power_factor() >= 1.0, "step {step}: {pen:?}");
+            }
+        }
+    });
+}

@@ -111,3 +111,39 @@ pub fn with_tanker<R>(f: impl FnOnce(&OperatingPoint) -> R) -> R {
     );
     f(&OperatingPoint::new(&ship, Knots(14.0), &table).unwrap())
 }
+
+/// Guild model with default (calibrated) parameters.
+pub fn guild() -> nautilus_ocean::fouling::guild_model::GuildModel {
+    nautilus_ocean::fouling::guild_model::GuildModel::new(
+        nautilus_ocean::fouling::params::GuildParams::default(),
+    )
+    .unwrap()
+}
+
+/// One voyage leg of constant conditions, split into daily segments (the last may be shorter),
+/// as an AIS track would be.
+pub fn leg(days: f64, sst: f64, psu: f64, knots: f64, port: PortStatus, km: f64) -> Vec<Segment> {
+    let mut out = Vec::new();
+    let mut left = days;
+    while left > 1e-12 {
+        let d = if left > 1.0 { 1.0 } else { left };
+        out.push(
+            Segment::new(
+                Days(d),
+                Knots(knots),
+                Celsius(sst),
+                Psu(psu),
+                port,
+                Kilometres(km),
+            )
+            .unwrap(),
+        );
+        left -= d;
+    }
+    out
+}
+
+/// Idle at a berth: `leg(days, sst, psu, 0 kn, Berth, 0 km)`.
+pub fn berth_leg(days: f64, sst: f64, psu: f64) -> Vec<Segment> {
+    leg(days, sst, psu, 0.0, PortStatus::Berth, 0.0)
+}
