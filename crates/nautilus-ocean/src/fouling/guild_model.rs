@@ -6,7 +6,7 @@
 //! hull and the propeller. Settlement, growth, thermal and freshwater death, brackish death,
 //! detachment and shell weathering all depend on the current environment *and* on the
 //! state, so curve shapes, plateaus, die-offs and breeding seasons follow from the route.
-//! Integration: [`super::integrate`] (fixed-step integrating-factor RK4).
+//! Integration: fixed-step integrating-factor RK4 (`integrate.rs`).
 //!
 //! # Example
 //!
