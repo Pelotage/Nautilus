@@ -254,6 +254,9 @@ mod tests {
         (a - b).abs() <= tol
     }
 
+    /// Temperature response: doubles per +10 °C (Q10 = 2), equals 1 at the 25 °C reference,
+    /// stops rising above 32 °C, and drops to the 0.1 floor in polar water.
+    /// Expected values: the Q10 formula worked by hand (2^(-1) = 0.5 at 15 °C).
     #[test]
     fn temperature_q10_and_clamps() {
         let t = TemperatureResponse::default();
@@ -267,6 +270,9 @@ mod tests {
         assert_eq!(t.factor(Celsius(-2.0)), 0.1); // cold floor
         assert!(t.factor(Celsius(12.0)) >= 0.1);
     }
+    /// Salinity response: full growth in sea water, half at 5 PSU, none in fresh water, and
+    /// soft fouling (stenohaline) already zero at 10 PSU.
+    /// Expected values: the piecewise-linear ramp worked by hand.
     #[test]
     fn salinity_ramps() {
         let s = SalinityResponse::EURYHALINE;
@@ -276,6 +282,9 @@ mod tests {
         assert_eq!(s.factor(Psu(0.3)), 0.0);
         assert_eq!(SalinityResponse::STENOHALINE.factor(Psu(10.0)), 0.0);
     }
+    /// Settlement vs speed: larvae settle freely when the ship is still, ~96% at 0.5 kn,
+    /// ~5% at 2 kn, essentially never at 14 kn service speed.
+    /// Expected values: the logistic formula evaluated independently (spec §settlement gate).
     #[test]
     fn settlement_gate_values() {
         let g = GateParams::default();
@@ -284,6 +293,9 @@ mod tests {
         assert!(close(g.settlement(Knots(2.0)), 0.05036, 1e-4));
         assert!(g.settlement(Knots(14.0)) < 1e-20);
     }
+    /// Larval supply vs location: full in port and near the coast, falling linearly to a 2%
+    /// floor beyond 100 km offshore; a berthed, stationary ship gets the full gate.
+    /// Expected values: linear interpolation worked by hand (57.5 km is halfway → 0.51).
     #[test]
     fn propagule_and_gate() {
         let g = GateParams::default();
@@ -306,6 +318,8 @@ mod tests {
         .unwrap();
         assert!(close(g.gate(&berth), 1.0, 1e-12));
     }
+    /// Input checking: zero-length segments are allowed, but negative, NaN or infinite
+    /// duration, speed, temperature or salinity are rejected instead of silently corrupting state.
     #[test]
     fn segment_validation() {
         let ok = |d: f64| {

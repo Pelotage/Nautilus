@@ -115,6 +115,8 @@ fn stage1_rate(seg: &Segment) -> f64 {
     p.temperature.factor(seg.sst()) * p.salinity.factor(seg.salinity()) * p.gate.gate(seg)
 }
 
+/// Stage 1's exposure after 200 random segments equals the sum of rate × duration computed
+/// in the test from the public response functions. Oracle: independent re-computation.
 #[test]
 fn stage1_exposure_equals_hand_sum() {
     let mut rng = Rng(1);
@@ -132,6 +134,7 @@ fn stage1_exposure_equals_hand_sum() {
     );
 }
 
+/// Shuffling the order of segments does not change Stage 1's exposure (it is a sum).
 #[test]
 fn stage1_exposure_is_order_independent() {
     let mut rng = Rng(2);
@@ -151,6 +154,8 @@ fn stage1_exposure_is_order_independent() {
     ));
 }
 
+/// Cutting a segment into 2, 5 or 17 equal pieces gives the same state as the whole
+/// segment, for both stages — proves the closed-form updates are exact, not approximations.
 #[test]
 fn segment_splitting_invariance_both_stages() {
     let mut rng = Rng(3);
@@ -206,6 +211,8 @@ fn idle(days: f64, t: f64, s: f64) -> Segment {
     .unwrap()
 }
 
+/// At any temperature 12–32 °C, d days of Stage 2 growth equals d × Q10^((T−25)/10) days
+/// on Uzun's equatorial curve. Oracle: the Q10 law applied to the published curve.
 #[test]
 fn stage2_time_temperature_equivalence() {
     let mut rng = Rng(4);
@@ -220,6 +227,7 @@ fn stage2_time_temperature_equivalence() {
     }
 }
 
+/// Without maintenance and at constant temperature, the power factor never goes down.
 #[test]
 fn penalties_monotone_without_events() {
     let mut rng = Rng(5);
@@ -250,6 +258,7 @@ fn penalties_monotone_without_events() {
     });
 }
 
+/// A ship in water 2 °C warmer never ends up with a smoother hull.
 #[test]
 fn warmer_never_fouls_less() {
     let mut rng = Rng(6);
@@ -265,6 +274,8 @@ fn warmer_never_fouls_less() {
     }
 }
 
+/// After 200 random voyages, every maintenance event (any remnant fraction) leaves the hull
+/// and propeller no rougher than before. (Review focus 3.)
 #[test]
 fn events_never_increase_fouling_random() {
     let mut rng = Rng(7);
@@ -298,6 +309,8 @@ fn events_never_increase_fouling_random() {
     }
 }
 
+/// 200 random ships (80–400 m, 8–25 kn, 30 µm–10 mm): lookup table within 0.6 percentage
+/// points of the exact solver, and the exact solver never says rougher is faster.
 #[test]
 fn granville_table_accuracy_random() {
     let mut rng = Rng(8);
@@ -324,6 +337,8 @@ fn granville_table_accuracy_random() {
     }
 }
 
+/// A four-leg voyage (hot berth → Panama freshwater → ocean crossing → anchorage) whose
+/// expected ratings and coverage are worked out step by step in the test.
 #[test]
 fn hand_computed_voyage_stage2() {
     // Voyage: 120 d berth 28 °C 35 PSU → 0.5 d Panama-like freshwater transit
@@ -426,6 +441,8 @@ fn hand_computed_voyage_stage2() {
     assert!(rel_close(t.factor(Celsius(22.0)), q(q_sl, 22.0), 1e-12));
 }
 
+/// 200 segments of extreme but legal input (−2/34 °C, 0/40 PSU, up to 10 years long): no
+/// penalty is ever NaN or infinite. (Review focus 1 and 2.)
 #[test]
 fn no_nan_under_extremes() {
     let mut rng = Rng(9);

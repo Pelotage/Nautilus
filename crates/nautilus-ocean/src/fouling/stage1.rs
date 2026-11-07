@@ -277,6 +277,8 @@ mod tests {
         Stage1Model::new(Stage1Params::default()).unwrap()
     }
 
+    /// Stage 1 core idea: fouling clock runs while the ship sits in port, practically stops
+    /// at 14 kn offshore, and runs at half speed in 15 °C water (Q10 = 2).
     #[test]
     fn idle_accumulates_sailing_does_not() {
         let mut s = m();
@@ -287,6 +289,8 @@ mod tests {
         s.advance(&berth(10.0, 15.0));
         assert!(close(s.hull_exposure().value(), 15.0, 1e-9)); // Q10 = 2 ⇒ half rate at 15 °C
     }
+    /// Stage 1 penalty grows linearly with exposure (0.0012 per idle day → 19.98% at 166.5 d)
+    /// and saturates at the 86% heavy-calcareous cap (Schultz).
     #[test]
     fn observation_linear_then_capped() {
         let mut s = m();
@@ -295,6 +299,8 @@ mod tests {
         s.advance(&berth(1.0e4, 25.0));
         assert_eq!(s.hull_fouling_fraction(), 0.86);
     }
+    /// Paint roughness (+20 µm/yr) and propeller loss (+2.6%/yr) grow with calendar time
+    /// regardless of activity; the propeller loss caps at 32%.
     #[test]
     fn calendar_drifts() {
         let mut s = m();
@@ -304,6 +310,8 @@ mod tests {
         s.advance(&sail(20.0 * 365.25));
         assert_eq!(s.prop_eta_loss(), 0.32);
     }
+    /// What each maintenance event does in Stage 1: in-water clean leaves a 13-day residual
+    /// plus 20% of the excess, grooming leaves only the residual, dry-dock resets everything.
     #[test]
     fn reset_maps() {
         let mut s = m();
@@ -324,6 +332,8 @@ mod tests {
             (0.0, 120.0, 0.0)
         );
     }
+    /// Cleaning an already-clean hull changes nothing; docking twice equals docking once;
+    /// polishing zeroes the propeller loss. (Review focus 3.)
     #[test]
     fn events_never_increase_fouling_and_are_idempotent() {
         let mut s = m();
@@ -339,6 +349,7 @@ mod tests {
         s.apply(MaintenanceEvent::PropellerPolish);
         assert_eq!(s.prop_eta_loss(), 0.0);
     }
+    /// A spot-repair docking only recovers half of the paint roughness gained since docking.
     #[test]
     fn spot_repair_partial_coating_reset() {
         let mut s = m();
@@ -346,6 +357,8 @@ mod tests {
         s.apply(MaintenanceEvent::DryDockSpotRepair);
         assert!(close(s.ahr().value(), 140.0, 1e-9));
     }
+    /// 30 years at 30 °C with no maintenance: penalties stay finite and within their caps.
+    /// (Review focus 2.)
     #[test]
     fn thirty_years_finite() {
         let mut s = m();
@@ -367,6 +380,8 @@ mod tests {
                 && p.propeller_eta_loss <= 0.32
         );
     }
+    /// A ship straight out of dry-dock has a power factor of exactly 1 (penalties are measured
+    /// from the as-applied hull).
     #[test]
     fn freshly_docked_has_no_penalty() {
         let (ship, table) = (
@@ -380,6 +395,8 @@ mod tests {
         });
         assert_eq!(p.power_factor(), 1.0);
     }
+    /// Parameter values that would make the power factor NaN, infinite or negative
+    /// (e.g. a 100% propeller-loss cap, zero settlement width, zero Q10) are rejected up front.
     #[test]
     fn rejects_parameters_that_break_the_power_factor() {
         let bad =

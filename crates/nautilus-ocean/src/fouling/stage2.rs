@@ -391,6 +391,7 @@ mod tests {
         Stage2Model::new(Stage2Params::default()).unwrap()
     }
 
+    /// Stage 2 is only calibrated for self-polishing paint; foul-release is refused.
     #[test]
     fn foul_release_refused() {
         let p = Stage2Params {
@@ -402,6 +403,8 @@ mod tests {
             Err(FoulingError::UnsupportedCoating)
         ));
     }
+    /// At 25 °C in port the Stage 2 model reproduces Uzun's published equatorial curves
+    /// exactly (slime at 50 d, soft at 200 d, coverage at 393 d).
     #[test]
     fn reproduces_equatorial_curves_at_25c() {
         let mut s = m();
@@ -412,6 +415,8 @@ mod tests {
         s.advance(&idle(193.1204, 25.0, 35.0));
         assert!(close(s.calcareous_coverage(), 51.9495, 1e-2));
     }
+    /// At 17 °C the Q10 clocks reproduce Uzun's Mediterranean timing: slime plateaus near day
+    /// 271.9 and coverage reaches half its 50% plateau at day ~696.
     #[test]
     fn reproduces_mediterranean_delays_at_17c() {
         let mut s = m();
@@ -423,6 +428,8 @@ mod tests {
         c.advance(&idle(695.864, 17.0, 35.0));
         assert!(close(c.calcareous_coverage(), 25.0, 0.1)); // half of the 50% Med plateau
     }
+    /// A 12 h freshwater transit (e.g. Panama's Gatun Lake) halves slime and soft fouling but
+    /// leaves barnacles; a 2.4 h transit is too short to kill anything.
     #[test]
     fn freshwater_culls_soft_not_hard() {
         let mut s = m();
@@ -437,6 +444,8 @@ mod tests {
         short.advance(&idle(0.1, 25.0, 0.3)); // 2.4 h < 3 h ⇒ pause only
         assert!(close(short.soft_rating(), so, 1e-9));
     }
+    /// In 10 PSU brackish water soft fouling cannot grow while barnacles grow at the reduced
+    /// euryhaline rate.
     #[test]
     fn brackish_freezes_soft_slows_hard() {
         let mut s = m();
@@ -450,6 +459,8 @@ mod tests {
             1e-9
         ));
     }
+    /// An in-water clean leaves the 40 µm post-cleaning roughness floor (GloFouling), and a
+    /// second clean changes nothing.
     #[test]
     fn in_water_clean_resets_to_40um_floor() {
         let mut s = m();
@@ -468,6 +479,7 @@ mod tests {
         });
         assert_eq!(before, s.hull_ks()); // idempotent
     }
+    /// An in-water clean that leaves 30% of barnacles leaves 30% of the coverage.
     #[test]
     fn calcareous_remnant_scales_coverage() {
         let mut s = m();
@@ -478,6 +490,7 @@ mod tests {
         });
         assert!(close(s.calcareous_coverage(), 0.3 * sc, 1e-6));
     }
+    /// Propeller roughness grows 100 µm/yr, polishing brings it to 40 µm, docking to 30 µm.
     #[test]
     fn propeller_drift_polish_dock() {
         let mut s = m();
@@ -498,6 +511,7 @@ mod tests {
         s.apply(MaintenanceEvent::DryDockFullBlast);
         assert!(close(s.prop_ks().value(), 30.0, 1e-9));
     }
+    /// 30 years at 31 °C: ratings ≤ 70, coverage ≤ 100%, finite power factor. (Review focus 2.)
     #[test]
     fn thirty_years_bounded() {
         let mut s = m();
@@ -520,6 +534,8 @@ mod tests {
             .is_finite()
         );
     }
+    /// A ship straight out of dry-dock has a power factor of exactly 1 (penalties are measured
+    /// from the as-applied hull).
     #[test]
     fn freshly_docked_has_no_penalty() {
         let (ship, table) = (
@@ -537,6 +553,8 @@ mod tests {
         s.apply(MaintenanceEvent::DryDockFullBlast);
         assert_eq!(s.power_penalty(&op).power_factor(), 1.0);
     }
+    /// The freshwater kill depends on how long the stay is, not on how the AIS track happens
+    /// to be cut into segments (one 24 h piece, two 12 h, or twelve 2 h give the same result).
     #[test]
     fn freshwater_cull_independent_of_split() {
         let mut base = m();
@@ -560,6 +578,7 @@ mod tests {
         s.advance(&idle(0.5, 25.0, 0.3));
         assert!(close(s.soft_rating(), 12.5, 1e-6));
     }
+    /// Stage 2 rejects fraction parameters outside [0, 1] (e.g. a cull that would add fouling).
     #[test]
     fn rejects_out_of_range_fractions() {
         let p = Stage2Params {

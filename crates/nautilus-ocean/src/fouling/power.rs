@@ -163,6 +163,8 @@ mod tests {
     fn tanker() -> ShipParticulars {
         ShipParticulars::new(Metres(176.0), 0.5).unwrap()
     }
+    /// Combining the penalties: 20% hull resistance and 10% propeller efficiency loss give
+    /// 1.2 × 1.02 / 0.9; no fouling gives exactly 1. Expected values: arithmetic by hand.
     #[test]
     fn power_factor_arithmetic() {
         let p = PowerPenalty {
@@ -178,6 +180,8 @@ mod tests {
         };
         assert_eq!(zero.power_factor(), 1.0);
     }
+    /// Hull fouling penalty is measured from clean paint (30 µm = 0%), never negative for
+    /// smoother-than-new input, and matches the prototype at 100 µm and 10 mm (× 0.5 share).
     #[test]
     fn fouling_fraction_relative_to_reference() {
         let (ship, table) = (tanker(), GranvilleTable::new());
@@ -204,6 +208,9 @@ mod tests {
             0.006
         ));
     }
+    /// Paint-roughness penalty: 120 → 150 µm average hull roughness costs ~2% resistance on a
+    /// 176 m ship; paint smoother than at docking costs nothing.
+    /// Expected values: the ITTC formula worked independently.
     #[test]
     fn coating_fraction_120_to_150() {
         let (ship, table) = (
@@ -225,6 +232,9 @@ mod tests {
             0.0
         );
     }
+    /// Propeller efficiency loss vs blade roughness: zero when clean, interpolated in log-space
+    /// between table points, capped at 22.2% above 10 mm.
+    /// Expected values: the spec's ITTC strip-method table.
     #[test]
     fn propeller_table() {
         assert_eq!(propeller_eta_loss(Micrometres(30.0)), 0.0);
@@ -233,6 +243,7 @@ mod tests {
         let mid = propeller_eta_loss(Micrometres(173.205)); // log-midpoint of 100 and 300
         assert!(close(mid, 0.038, 1e-3));
     }
+    /// Ship inputs are checked: zero length or a frictional share above 100% are rejected.
     #[test]
     fn ship_validation() {
         assert!(ShipParticulars::new(Metres(0.0), 0.5).is_err());

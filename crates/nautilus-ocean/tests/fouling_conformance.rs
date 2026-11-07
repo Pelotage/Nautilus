@@ -57,6 +57,9 @@ fn stage2() -> Stage2Model {
     Stage2Model::new(Stage2Params::default()).unwrap()
 }
 
+/// Stage 1 on GloFouling's equatorial ship profile (556 idle days in 5 years) reaches the
+/// published 20% penalty at 1.5 years and 40% at 3 years.
+/// Oracle: GloFouling 2022 trigger points (the source Stage 1's slope was derived from).
 #[test]
 fn stage1_hits_glofouling_trigger_points() {
     let traj = with_op(|op| {
@@ -90,6 +93,8 @@ fn policy_means<M: FoulingModel>(make: impl Fn() -> M) -> [f64; 3] {
     })
 }
 
+/// Over 5 years, cleaning proactively beats cleaning reactively, which beats never
+/// cleaning — for both model stages. Oracle: the qualitative GloFouling result.
 #[test]
 fn policies_order_mean_penalty_both_stages() {
     let s1 = policy_means(stage1);
@@ -99,6 +104,8 @@ fn policies_order_mean_penalty_both_stages() {
     assert!(s2[0] < s2[1] && s2[1] < s2[2], "stage 2: {s2:?}");
 }
 
+/// Running the same 5-year scenario twice gives bit-identical output (no hidden randomness
+/// or iteration-order effects).
 #[test]
 fn deterministic_replay() {
     let timeline = equatorial_profile(5.0);

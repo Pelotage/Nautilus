@@ -208,10 +208,13 @@ mod tests {
         )
     }
 
+    /// An empty trajectory has no penalty (mean power factor 1).
     #[test]
     fn mean_of_empty_is_one() {
         assert_eq!(mean_power_factor(&[]), 1.0);
     }
+    /// The simulator emits one point per segment and per event, in order, with elapsed time
+    /// adding up correctly.
     #[test]
     fn points_follow_timeline_with_cumulative_elapsed() {
         let traj = run(
@@ -232,6 +235,7 @@ mod tests {
         assert_eq!(traj[1].event, Some(MaintenanceEvent::PropellerPolish));
         assert!(traj[0].event.is_none() && traj[2].event.is_none());
     }
+    /// When a cleaning policy triggers it records a hull clean and a propeller polish.
     #[test]
     fn policy_clean_emits_clean_and_polish_points() {
         let traj = run(&[berth(200.0)], CleaningPolicy::PROACTIVE); // 0.24 ≥ 0.20
@@ -247,6 +251,8 @@ mod tests {
         );
         assert!(traj.iter().all(|p| p.elapsed.value() == 200.0));
     }
+    /// After a dry-dock the policy waits for the first fouling trigger again rather than
+    /// cleaning on the old schedule.
     #[test]
     fn dry_dock_resets_policy_to_first_trigger() {
         // Clean at day 200; dock; then 190 sailing days (≥ 182.5 since the clean, but
@@ -267,6 +273,7 @@ mod tests {
         assert_eq!(after_dock.len(), 1);
         assert!(after_dock[0].event.is_none());
     }
+    /// The mean power factor is weighted by how long each segment lasts.
     #[test]
     fn mean_is_duration_weighted() {
         let traj = run(&[berth(100.0), sail(100.0)], CleaningPolicy::None);

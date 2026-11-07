@@ -176,6 +176,8 @@ mod tests {
     fn close(a: f64, b: f64, tol: f64) -> bool {
         (a - b).abs() <= tol
     }
+    /// Uzun 2019 equatorial slime and soft-fouling curves at sample ages.
+    /// Expected values: Uzun's Table 2 parameters evaluated independently.
     #[test]
     fn gaussian_ratings() {
         assert!(close(EQ_SLIME.seed(), 0.081326, 1e-5));
@@ -184,6 +186,8 @@ mod tests {
         assert!(close(EQ_SOFT.rating(200.0), 19.2643, 1e-3));
         assert!(close(EQ_SOFT.seed(), 5.178e-5, 1e-7));
     }
+    /// Inverting the curves (rating → age), which reset maps rely on; edge cases below the
+    /// seed and above the plateau.
     #[test]
     fn gaussian_inverse() {
         assert!(close(EQ_SLIME.age_for_rating(0.75), 19.8103, 1e-3));
@@ -192,6 +196,8 @@ mod tests {
         let a = EQ_SOFT.age_for_rating(10.0);
         assert!(close(EQ_SOFT.rating(a), 10.0, 1e-9));
     }
+    /// Uzun calcareous coverage curve: 3.5% at 100 days, ~52% at the 393-day midpoint, capped
+    /// at 100%; inverse returns the right age. Expected values: Uzun Table 3.
     #[test]
     fn coverage_curve_and_inverse() {
         let c = |a| EQ_CALCAREOUS.coverage(a, EQ_MAIN_ASYM, EQ_FAST_ASYM);
@@ -201,6 +207,8 @@ mod tests {
         let a = EQ_CALCAREOUS.age_for_coverage(30.0, EQ_MAIN_ASYM, EQ_FAST_ASYM, 5000.0);
         assert!(close(c(a), 30.0, 1e-6));
     }
+    /// Uzun Eqs. 17–18, converting fouling rating and coverage into an equivalent sand-grain
+    /// roughness; coverage overrides rating when present. Expected values: the equations by hand.
     #[test]
     fn ks_mappings() {
         assert!(close(ks_from_rating(0.75).value(), 40.024, 1e-3));

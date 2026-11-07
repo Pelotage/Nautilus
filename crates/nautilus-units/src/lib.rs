@@ -109,6 +109,7 @@ impl Micrometres {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Unit conversions: knots → m/s, hours → days, days → years, µm → m.
     #[test]
     fn conversions() {
         assert!((Knots(1.0).to_metres_per_second() - 0.514_444_444_444).abs() < 1e-9);

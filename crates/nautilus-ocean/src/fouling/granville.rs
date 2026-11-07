@@ -178,11 +178,16 @@ mod tests {
     fn re(l: f64, kn: f64) -> f64 {
         kn * 1852.0 / 3600.0 * l / 1.19e-6
     }
+    /// Smooth-hull friction line (Schoenherr) for a 176 m tanker and a 230 m container ship.
+    /// Expected values: the independent Python prototype (granville_prototype.py).
     #[test]
     fn schoenherr_matches_prototype() {
         assert!(close(schoenherr_cf(re(176.0, 14.0)) * 1e3, 1.519, 0.001));
         assert!(close(schoenherr_cf(re(230.0, 24.0)) * 1e3, 1.379, 0.001));
     }
+    /// Friction increase from hull roughness, 30 µm (clean paint) to 10 mm (heavy barnacles),
+    /// for a 176 m tanker at 14 kn. Expected values: the independent Python prototype, ±0.15
+    /// percentage points.
     #[test]
     fn granville_direct_vectors_176m_14kn() {
         let r = re(176.0, 14.0);
@@ -198,6 +203,8 @@ mod tests {
             assert!(close(got, pct, 0.15), "ks={ks_um}: {got}");
         }
     }
+    /// Same roughness → friction check for a frigate, a VLCC and a feeder ship, so the solver
+    /// is not only right at one ship size. Expected values: the Python prototype.
     #[test]
     fn granville_direct_vectors_other_ships() {
         assert!(close(
@@ -216,6 +223,8 @@ mod tests {
             0.15
         ));
     }
+    /// The fast lookup table agrees with the slow exact solver at points between grid nodes
+    /// (where interpolation error is largest). Expected values: the Python prototype.
     #[test]
     fn table_matches_direct_off_grid() {
         let t = GranvilleTable::new();
@@ -231,6 +240,8 @@ mod tests {
             0.6
         ));
     }
+    /// Inputs beyond the table's range (absurd speeds, roughness larger than the ship) are
+    /// clamped to the table edge, never extrapolated, and never produce NaN/inf.
     #[test]
     fn table_clamps_outside_grid() {
         let t = GranvilleTable::new();
@@ -239,6 +250,8 @@ mod tests {
         assert!(a.is_finite() && close(a, b, 1e-12));
         assert!(t.delta_cf_ratio(1e9, 1.0).is_finite());
     }
+    /// ITTC-78 roughness allowance formula (used for paint roughness).
+    /// Expected values: the formula evaluated in the Python prototype.
     #[test]
     fn ittc_allowance_vectors() {
         let r = re(176.0, 14.0);
