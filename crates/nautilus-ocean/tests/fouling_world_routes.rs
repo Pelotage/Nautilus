@@ -88,19 +88,95 @@ fn panama_transit_freshwater_kill() {
     );
 }
 
-/// Seasons without a calendar: a clean hull at 14 °C stays clean (too cold for warm breeding,
-/// too warm for cold breeding), then a month at 18 °C lets the warm guild settle, as a Cape Town
-/// – Durban route moves through the year.
+/// Seasons without a calendar: on a clean hull, a cold month (9 °C) lets only the cold guild
+/// settle, and a warm month (20 °C) lets only the warm guild settle. That is how a Cape Town –
+/// Durban route moves through the year, with no calendar input.
 #[test]
-fn southern_seasons_switch_settlement_without_calendar() {
+fn seasons_switch_settlement_between_guilds_without_calendar() {
+    let mut winter = guild();
+    sail(&mut winter, &berth_leg(30.0, 9.0, 35.0));
+    assert!(winter.guild(Guild::Cold).slime > 0.0 && winter.guild(Guild::Warm).slime == 0.0);
+    let mut summer = guild();
+    sail(&mut summer, &berth_leg(30.0, 20.0, 35.0));
+    assert!(summer.guild(Guild::Warm).slime > 0.0 && summer.guild(Guild::Cold).slime == 0.0);
+}
+
+/// No dead band: at every temperature between the two guilds' breeding ranges (12.5–15.5 °C;
+/// San Francisco, Cape Town, the Channel), a hull idle for a year fouls. (Review finding C1:
+/// with non-overlapping ranges a ship laid up at 13.5 °C stayed perfectly clean forever.)
+#[test]
+fn no_dead_band_between_guild_breeding_ranges() {
+    for t in [12.5, 13.0, 13.5, 14.0, 14.5, 15.5] {
+        let mut m = guild();
+        sail(&mut m, &berth_leg(365.0, t, 35.0));
+        assert!(m.slime_rating() > 1.0, "{t} °C: slime {}", m.slime_rating());
+    }
+}
+
+fn year_idle_hull_fraction(t: f64) -> f64 {
     let mut m = guild();
-    sail(&mut m, &berth_leg(30.0, 14.0, 35.0));
-    assert_eq!(
-        (m.slime_rating(), m.soft_rating(), m.calcareous_coverage()),
-        (0.0, 0.0, 0.0)
+    sail(&mut m, &berth_leg(365.0, t, 35.0));
+    with_tanker(|op| m.power_penalty(op).hull_fouling_fraction)
+}
+
+/// Cold water fouls less than temperate water: a year idle at −2 °C or 5 °C gives a smaller
+/// hull penalty than at 17 °C. (Review finding I1: soft fouling saturated in near-freezing water.)
+#[test]
+fn colder_water_fouls_less() {
+    let (polar, cold, med) = (
+        year_idle_hull_fraction(-2.0),
+        year_idle_hull_fraction(5.0),
+        year_idle_hull_fraction(17.0),
     );
-    sail(&mut m, &berth_leg(30.0, 18.0, 35.0));
-    assert!(m.guild(Guild::Warm).slime > 0.0);
+    assert!(
+        polar <= cold && cold < med,
+        "−2 °C {polar}, 5 °C {cold}, 17 °C {med}"
+    );
+}
+
+/// Hot water is not a refuge: over 5 years on the GloFouling profile, a Persian Gulf summer
+/// temperature (33 °C) fouls at least as much as the 25 °C equatorial site. (Review finding I2:
+/// fouling collapsed above 32 °C.)
+#[test]
+fn gulf_heat_fouls_at_least_as_much_as_equator() {
+    use nautilus_ocean::fouling::calibration::glofouling_profile;
+    use nautilus_ocean::fouling::simulate::{CleaningPolicy, simulate};
+    let mean = |sst: f64| {
+        let mut m = guild();
+        with_tanker(|op| {
+            let traj = simulate(
+                &mut m,
+                &glofouling_profile(5.0, sst),
+                CleaningPolicy::NONE,
+                op,
+            );
+            let total: f64 = traj.iter().map(|t| t.segment_duration.value()).sum();
+            traj.iter()
+                .map(|t| t.segment_duration.value() * t.penalty.hull_fouling_fraction)
+                .sum::<f64>()
+                / total
+        })
+    };
+    let (gulf, eq) = (mean(33.0), mean(25.0));
+    assert!(gulf >= eq, "33 °C {gulf} < 25 °C {eq}");
+}
+
+/// Light grooming never beats a full in-water clean on the same heavily fouled hull (it keeps
+/// dead shells and treats the same reachable area). (Review finding I4.)
+#[test]
+fn grooming_never_beats_full_clean() {
+    let mut m = guild();
+    sail(&mut m, &berth_leg(900.0, 28.0, 35.0));
+    let after = |e: MaintenanceEvent| {
+        let mut c = m.clone();
+        c.apply(e);
+        with_tanker(|op| c.power_penalty(op).power_factor())
+    };
+    let groom = after(MaintenanceEvent::HullGrooming);
+    let clean = after(MaintenanceEvent::InWaterHullClean {
+        calcareous_remnant: 0.2,
+    });
+    assert!(groom >= clean, "groom {groom} < clean {clean}");
 }
 
 fn mixed_route(chl: Option<f64>) -> Vec<Segment> {

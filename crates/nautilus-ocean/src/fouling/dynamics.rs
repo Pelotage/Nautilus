@@ -4,51 +4,64 @@
 use super::integrate::LinearLoss;
 pub(crate) use super::rates::SegmentRates;
 
-/// Length of the state vector.
-pub(crate) const N: usize = 10;
+/// Components of one hull patch (slime ×2, soft ×2, live calcareous ×2, dead shells).
+pub(crate) const HULL: usize = 7;
+/// Length of the state vector: two hull patches (cleanable, niche) and the propeller.
+pub(crate) const N: usize = 2 * HULL + 3;
 
-/// Positions in the state vector (`[warm, cold]` pairs for each class).
+/// Positions in the state vector (`[warm, cold]` pairs for each class). Hull positions are
+/// offsets within a patch; add a [`ix::PATCHES`] base.
 pub(crate) mod ix {
-    /// Slime rating per guild.
+    /// Slime rating per guild (within a hull patch).
     pub const SLIME: [usize; 2] = [0, 1];
-    /// Soft-fouling rating per guild.
+    /// Soft-fouling rating per guild (within a hull patch).
     pub const SOFT: [usize; 2] = [2, 3];
-    /// Live calcareous coverage on the hull per guild (%).
+    /// Live calcareous coverage per guild (within a hull patch), %.
     pub const CALC: [usize; 2] = [4, 5];
-    /// Dead shell coverage on the hull (%).
+    /// Dead shell coverage (within a hull patch), %.
     pub const DEAD: usize = 6;
+    /// Base offsets of the hull patches: cleanable, niche.
+    pub const PATCHES: [usize; 2] = [0, super::HULL];
     /// Live calcareous coverage on the propeller per guild (%).
-    pub const PROP_CALC: [usize; 2] = [7, 8];
+    pub const PROP_CALC: [usize; 2] = [2 * super::HULL, 2 * super::HULL + 1];
     /// Dead shell coverage on the propeller (%).
-    pub const PROP_DEAD: usize = 9;
+    pub const PROP_DEAD: usize = 2 * super::HULL + 2;
 }
 
 /// Rating capacities of slime and soft fouling (Uzun maxima).
 pub(crate) const RATING_CAPACITY: [f64; 2] = [20.0, 50.0];
 
-/// Gain terms dX/dt (settlement + growth). Never negative for a valid state.
+/// Gain terms dX/dt (settlement + growth) for both hull patches and the propeller. Never
+/// negative for a valid state.
 pub(crate) fn gains(x: &[f64; N], r: &SegmentRates) -> [f64; N] {
     let mut d = [0.0; N];
-    for (c, idx) in [ix::SLIME, ix::SOFT].into_iter().enumerate() {
-        let k = RATING_CAPACITY[c];
-        let total = x[idx[0]] + x[idx[1]];
-        let ln = (k / total).ln();
-        for g in 0..2 {
-            let settle = if total < k {
-                r.settle[c][g] * (1.0 - total / k)
-            } else {
-                0.0
-            };
-            // Growth is 0 at F = 0 (its limit) and whenever ln(K/F) ≤ 0 (round-off above K).
-            let grow = if total > 0.0 && ln > 0.0 {
-                r.grow[c][g] * x[idx[g]] * ln.sqrt()
-            } else {
-                0.0
-            };
-            d[idx[g]] = settle + grow;
+    for base in ix::PATCHES {
+        for (c, rel) in [ix::SLIME, ix::SOFT].into_iter().enumerate() {
+            let idx = [base + rel[0], base + rel[1]];
+            let k = RATING_CAPACITY[c];
+            let total = x[idx[0]] + x[idx[1]];
+            let ln = (k / total).ln();
+            for g in 0..2 {
+                let settle = if total < k {
+                    r.settle[c][g] * (1.0 - total / k)
+                } else {
+                    0.0
+                };
+                // Growth is 0 at F = 0 (its limit) and whenever ln(K/F) ≤ 0 (round-off above K).
+                let grow = if total > 0.0 && ln > 0.0 {
+                    r.grow[c][g] * x[idx[g]] * ln.sqrt()
+                } else {
+                    0.0
+                };
+                d[idx[g]] = settle + grow;
+            }
         }
     }
-    for (live, dead) in [(ix::CALC, ix::DEAD), (ix::PROP_CALC, ix::PROP_DEAD)] {
+    let shells = ix::PATCHES
+        .map(|b| ([b + ix::CALC[0], b + ix::CALC[1]], b + ix::DEAD))
+        .into_iter()
+        .chain([(ix::PROP_CALC, ix::PROP_DEAD)]);
+    for (live, dead) in shells {
         let free = r.capacity - x[live[0]] - x[live[1]] - x[dead];
         if free > 0.0 {
             for g in 0..2 {
@@ -59,22 +72,26 @@ pub(crate) fn gains(x: &[f64; N], r: &SegmentRates) -> [f64; N] {
     d
 }
 
-/// Linear losses: per-guild mortality and detachment; live shells go to the matching
-/// dead-shell pool; dead shells weather away.
+/// Linear losses: per-guild mortality and detachment; live shells go to the dead-shell pool of
+/// the same surface; dead shells weather away.
 pub(crate) fn losses(r: &SegmentRates) -> LinearLoss<N> {
     let mut l = LinearLoss {
         rate: [0.0; N],
         into: [None; N],
     };
+    for base in ix::PATCHES {
+        for g in 0..2 {
+            l.rate[base + ix::SLIME[g]] = r.loss[0][g];
+            l.rate[base + ix::SOFT[g]] = r.loss[1][g];
+            l.rate[base + ix::CALC[g]] = r.loss[2][g];
+            l.into[base + ix::CALC[g]] = Some(base + ix::DEAD);
+        }
+        l.rate[base + ix::DEAD] = r.weathering;
+    }
     for g in 0..2 {
-        l.rate[ix::SLIME[g]] = r.loss[0][g];
-        l.rate[ix::SOFT[g]] = r.loss[1][g];
-        l.rate[ix::CALC[g]] = r.loss[2][g];
-        l.into[ix::CALC[g]] = Some(ix::DEAD);
         l.rate[ix::PROP_CALC[g]] = r.loss[2][g];
         l.into[ix::PROP_CALC[g]] = Some(ix::PROP_DEAD);
     }
-    l.rate[ix::DEAD] = r.weathering;
     l.rate[ix::PROP_DEAD] = r.weathering;
     l
 }

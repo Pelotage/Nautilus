@@ -219,8 +219,8 @@ impl Default for AgeClockParams {
 /// temperature tolerance).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GuildWindow {
-    /// Temperature at which [`ClassRates`] `*_ref` values apply (warm 25 °C; cold 9 °C so
-    /// both guilds have the same peak rate at their own optimum).
+    /// Temperature at which [`ClassRates`] `*_ref` values apply (25 °C for both guilds, so
+    /// they share one thermal performance curve and differ only in their windows).
     pub rate_ref_temp: Celsius,
     /// Optimum temperature: rates rise by Q10 up to here.
     pub t_opt: Celsius,
@@ -285,8 +285,9 @@ pub struct GuildParams {
     pub guilds: [GuildWindow; 2],
     /// Class rates, indexed by [`SLIME`], [`SOFT`], [`CALCAREOUS`] (warm-guild reference;
     /// the cold guild uses the same values at its own reference temperature). Fitted
-    /// (Layer 1). Growth rates and their Q10s are physically plausible; the *settlement*
-    /// Q10s are not (calcareous ≈ 3.6e9, soft ≈ 0.012). Settlement only sets when each curve
+    /// (Layer 1), with settlement Q10s constrained to ≥ 1 (settlement may not rise as water
+    /// cools). Growth rates and their Q10s are physically plausible; the calcareous
+    /// *settlement* Q10 is not (≈ 3.6e9). Settlement only sets when each curve
     /// takes off, and Uzun's Mediterranean barnacle curve starts from an almost-zero seed.
     /// In practice barnacles barely settle below about 22 °C, and settlement is capped at the
     /// guild optimum (29 °C).
@@ -334,8 +335,12 @@ pub struct GuildParams {
     /// (10 µm). Layer 3 showed realistic damage barely moves the dry-dock / in-water ratio, so
     /// it is a fixed prior. Assumption — calibrate.
     pub clean_damage: Micrometres,
-    /// Share of the hull's fouling an in-water clean actually treats (niche areas, parts of the
-    /// flat bottom and sea chests are missed). Fitted (Layer 3).
+    /// Cleanable share of the hull. In-water cleaning and grooming reach only this patch; the
+    /// niche share 1 − η (sea chests, recesses, parts of the flat bottom) is reset only by
+    /// dry-docking. Fitted (Layer 3) to Adland's commercial 2:1 dry-dock / in-water recovery:
+    /// 0.39. Settled decision (user, 2026-11-07): the default represents routine commercial
+    /// cleans. A thorough clean (Hundley's destroyer, +70 % → +9 %) needs about 0.95; set η per
+    /// fleet for that. One default cannot match both, so do not re-fit to reconcile them.
     pub clean_efficiency: f64,
     /// Coating AHR out of dry-dock (120 µm).
     pub ahr_out_docking: Micrometres,
@@ -376,13 +381,18 @@ impl Default for GuildParams {
             gate: GateParams::default(),
             soft_salinity: SalinityResponse::STENOHALINE,
             hard_salinity: SalinityResponse::EURYHALINE,
+            // Warm: optimum 31 °C, zero growth and death above 38 °C (Gulf / Red Sea summers stay
+            // heavy fouling areas). Cold: breeds up to 15 °C so the two breeding ranges overlap
+            // (no dead band). Both share the warm thermal curve (reference 25 °C): the cold guild
+            // survives and breeds in cold water, it does not grow faster there. Review fixes,
+            // 2026-11-07. Assumption — calibrate.
             guilds: [
-                window(25.0, 29.0, 35.0, 10.0, 35.0, 15.0, 35.0),
-                window(9.0, 13.0, 24.0, -2.0, 24.0, -2.0, 12.0),
+                window(25.0, 31.0, 38.0, 10.0, 38.0, 15.0, 38.0),
+                window(25.0, 13.0, 24.0, -2.0, 24.0, -2.0, 15.0),
             ],
-            // Layer 1 fit: examples/calibrate_fouling.rs layer1, 2026-11-07. Worst gaps to Uzun
-            // 2019 at 25 °C / 17 °C: slime 0.081 / 0.065, soft 0.005 / 0.005 rating points,
-            // coverage 0.074 / 0.074 percentage points (limits 1, 2, 3).
+            // Layer 1 fit: examples/calibrate_fouling.rs layer1, 2026-11-07 (settlement Q10 ≥ 1).
+            // Worst gaps to Uzun 2019 at 25 °C / 17 °C: slime 0.081 / 0.065, soft 1.423 / 1.423
+            // rating points, coverage 0.074 / 0.074 percentage points (limits 1, 2, 3).
             classes: [
                 rates(
                     1.0025880039562401e-2,
@@ -391,10 +401,10 @@ impl Default for GuildParams {
                     3.3036727918417013e0,
                 ),
                 rates(
-                    4.926792468332563e-6,
-                    2.7350951847529014e-2,
-                    1.2200085392013421e-2,
-                    1.944356796762606e0,
+                    3.584319815977753e-5,
+                    2.4484776959340083e-2,
+                    1.0000000000000375e0,
+                    1.4730537112601139e0,
                 ),
                 rates(
                     4.4801957879398244e-7,
@@ -427,12 +437,12 @@ impl Default for GuildParams {
             weathering_per_day: 0.001,
             high_coverage_slope: 80.0,
             // Layer 2 fit: examples/calibrate_fouling.rs layer2, 2026-11-07. 5-year mean hull
-            // penalty 0.330 equatorial (GloFouling 0.30) and 0.172 Mediterranean (0.22); limits ± 0.05.
-            roughness_scale: 5.190796405078837e-1,
+            // penalty 0.3305 equatorial (GloFouling 0.30) and 0.1707 Mediterranean (0.22); limits ± 0.05.
+            roughness_scale: 5.192472696306168e-1,
             clean_damage: Micrometres(10.0),
-            // Layer 3 fit: examples/calibrate_fouling.rs layer3, 2026-11-07. Dry-dock / in-water
-            // recovery ratio 2.000 (Adland ~2; limits 1.6–2.4).
-            clean_efficiency: 6.300333712297965e-1,
+            // Layer 3 fit: examples/calibrate_fouling.rs layer3, 2026-11-07, two-patch hull.
+            // Dry-dock / in-water recovery ratio 2.000 (Adland ~2; limits 1.6–2.4).
+            clean_efficiency: 3.91777138560426e-1,
             ahr_out_docking: Micrometres(120.0),
             ahr_drift_per_year: Micrometres(20.0),
             spot_repair_recovery: 0.5,

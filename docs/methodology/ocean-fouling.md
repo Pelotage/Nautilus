@@ -98,7 +98,7 @@ water, and the barnacle plateau needs a running mean temperature. The guild mode
 built for ships that move between climates. Its state is the fouling actually present,
 and the rates depend on that state.
 
-**State** (hull, plus its own calcareous state on the propeller), with g ∈ {warm, cold}:
+**State**, with g ∈ {warm, cold}. The hull is **two patches** that follow the same equations: the cleanable share η, which in-water cleaning and grooming reach, and the niche share 1 − η (sea chests, recesses, parts of the flat bottom), which only a dry-dock resets. Each patch carries:
 
 - slime ratings F_sl,g (sum ≤ 20);
 - soft ratings F_so,g (sum ≤ 50);
@@ -132,27 +132,32 @@ Guild windows (priors):
 
 | Guild | Optimum / zero | Lethal window | Breeding range |
 |---|---|---|---|
-| Warm | 29 / 35 °C | 10–35 °C | ≥ 15 °C |
-| Cold | 13 / 24 °C | −2–24 °C | ≤ 12 °C |
+| Warm | 31 / 38 °C | 10–38 °C | ≥ 15 °C |
+| Cold | 13 / 24 °C | −2–24 °C | ≤ 15 °C |
 
-The cold guild uses the warm guild's fitted peak rates around its own optimum. That is an
-assumption: two panel sites cannot identify both guilds.
+Both guilds share one thermal performance curve, referenced to 25 °C. The cold guild survives
+and breeds in cold water; it does not grow faster there. The breeding ranges overlap, so there
+is no temperature at which nothing settles. These priors were revised after the final review
+(see Settled decisions).
 
 **Observation:**
 
-- k_s = 30 µm + λ·(k_s,Uzun − 30 µm), where k_s,Uzun is the larger of Uzun Eq. 17 (total
+- per patch, k_s = 30 µm + λ·(k_s,Uzun − 30 µm), where k_s,Uzun is the larger of Uzun Eq. 17 (total
   rating) and Eq. 18 (live + dead coverage), and λ is the Layer 2 roughness scale;
+- the hull fouling penalty is the **area-weighted mean of the two patches' resistance**. The
+  `hull_ks()` getter reports the area-weighted mean roughness;
 - the propeller uses the larger of its drift roughness and its scaled blade-shell roughness;
 - the power chain is shared with the other models.
 
 **Events:**
 
-- **Dry-dock:** resets everything. A duplicate record counts once.
-- **In-water clean:** treats a share η of the hull. On that share, slime goes to the 0.75 floor,
-  soft fouling and live barnacles are removed, a fraction ρ of the shells stays as base plates,
-  and the paint gains 10 µm per 100 % coverage removed. The rest of the hull is untouched.
-  Cleaning twice with no time in between is a no-op.
-- **Grooming:** removes slime (to the floor), soft fouling and live barnacles; dead shells stay.
+- **Dry-dock:** resets both patches. A duplicate record counts once.
+- **In-water clean:** acts on the cleanable patch only. Slime goes to the 0.75 floor, soft
+  fouling and live barnacles are removed, a fraction ρ of the shells above earlier base plates
+  stays as new plates, and the paint gains 10 µm per 100 % coverage removed (area-weighted).
+  The niche patch is untouched, so cleaning twice in a row is a no-op.
+- **Grooming:** light brushing of the cleanable patch. Slime goes to the floor and soft fouling
+  is removed; calcified barnacles (live and dead) are left, so grooming never beats a clean.
 - **Propeller polish:** resets the blades.
 
 **Solver.** Fixed-step integrating-factor RK4, with steps of at most 0.25 day. The linear
@@ -164,26 +169,38 @@ limits, so RK4 overshoot near saturation cannot leave a rating above its maximum
 
 | Layer | Data | Fitted | Result |
 |---|---|---|---|
-| 1 Growth | Uzun 2019, 25 °C and 17 °C panels, 1,500 days | settlement and growth rates and their Q10s per class; capacities | worst gaps: slime 0.08, soft 0.005 rating points; coverage 0.07 percentage points (limits 1 / 2 / 3) |
-| 2 Roughness → power | GloFouling 5-year penalties (+30 % equatorial, +22 % Mediterranean) | roughness scale λ = 0.519 | 0.330 and 0.172 (limits ± 0.05) |
-| 3 Events | Adland dry-dock / in-water recovery ratio of about 2 | cleaning efficiency η = 0.630 | 2.000 (limits 1.6–2.4) |
+| 1 Growth | Uzun 2019, 25 °C and 17 °C panels, 1,500 days | settlement (Q10 ≥ 1) and growth rates and their Q10s per class; capacities | worst gaps: slime 0.08, soft 1.42 rating points; coverage 0.07 percentage points (limits 1 / 2 / 3) |
+| 2 Roughness → power | GloFouling 5-year penalties (+30 % equatorial, +22 % Mediterranean) | roughness scale λ = 0.519 | 0.3305 and 0.1707 (limits ± 0.05) |
+| 3 Events | Adland dry-dock / in-water recovery ratio of about 2 | cleanable share η = 0.392 | 2.000 (limits 1.6–2.4) |
 
-Decisions taken during calibration, all with the user:
+### Settled decisions (do not re-litigate)
 
-- **Layer 1:** equatorial coverage is scored against Uzun's main logistic only. The 3.5 % fast
-  term is unconfirmed (research spec open item 1) and stays below the 5 % threshold of Eq. 18.
-- **Layer 2:** fits one roughness scale λ instead of the planned coverage slope. The gap comes
-  from Uzun's rating mapping (a rating of 70 maps to 1 mm), not from coverage above 50 %.
-- **Layer 3:** fits a cleaning efficiency η. Realistic paint damage alone gives a ratio of only
-  about 1.1.
+All of these were decided with the user on 2026-11-07.
+
+1. **Fast barnacle term:** equatorial coverage is scored against Uzun's main logistic only. The
+   3.5 % fast term is unconfirmed (research spec open item 1) and stays below the 5 % threshold
+   of Eq. 18.
+2. **Layer 2 knob:** one roughness scale λ on all Uzun-derived roughness. The coverage slope
+   above 50 % could not close the gap; Uzun's rating mapping (a rating of 70 maps to 1 mm) is
+   the cause.
+3. **Partial cleaning:** two hull patches with area-weighted resistance, instead of
+   hull-average coverage.
+4. **Cleanable share η = 0.39 is the default.** It represents routine commercial cleans
+   (Adland's 2:1). A thorough clean like Hundley's destroyer (+70 % → +9 %) needs about 0.95.
+   One default cannot satisfy both: the Hundley test runs with η = 1, and users set η per fleet.
+5. **Priors after the final review:**
+   - overlapping breeding ranges (no 13–14 °C dead band);
+   - one shared thermal curve for both guilds, so cold water fouls less;
+   - warm guild optimum 31 °C and limit 38 °C, so Gulf and Red Sea heat still fouls;
+   - settlement Q10 ≥ 1;
+   - grooming leaves barnacles.
 
 **Caveats:**
 
-- The fitted *settlement* Q10s are fit artefacts (calcareous ≈ 3.6e9, soft ≈ 0.012). Settlement
-  only times when each curve takes off; growth Q10s are plausible.
+- The fitted calcareous *settlement* Q10 is a fit artefact (≈ 3.6e9). In practice barnacles
+  barely settle below about 22 °C, and settlement is capped at the 31 °C optimum.
 - Shell weathering (0.001/day) is a prior: it cannot be identified from the panel sites.
-- A partial clean averages coverage before the roughness mapping, which overstates the penalty
-  just after the clean. Hundley's thorough naval clean is therefore checked with η = 1.
+- Layer 2's Mediterranean result (0.1707) sits only 0.0007 inside its band.
 
 ### Which model to use
 

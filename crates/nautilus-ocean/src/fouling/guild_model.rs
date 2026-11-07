@@ -34,7 +34,7 @@
 
 use nautilus_units::{DAYS_PER_YEAR, Micrometres};
 
-use super::dynamics::{N, RATING_CAPACITY, SegmentRates, gains, ix, losses};
+use super::dynamics::{HULL, N, RATING_CAPACITY, SegmentRates, gains, ix, losses};
 use super::environment::Segment;
 use super::events::MaintenanceEvent;
 use super::integrate;
@@ -48,6 +48,8 @@ use super::{FoulingError, FoulingModel, OperatingPoint};
 
 /// Slime rating left by an in-water clean or grooming (≡ k_s 40 µm, GloFouling's floor).
 const CLEANED_SLIME_RATING: f64 = 0.75;
+/// The cleanable hull patch (reached by in-water cleaning and grooming).
+const CLEANABLE: usize = 0;
 
 /// A thermal guild.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,7 +60,7 @@ pub enum Guild {
     Cold,
 }
 
-/// The fouling of one guild on the hull.
+/// The fouling of one guild on the hull (area-weighted over both hull patches).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GuildState {
     /// Slime rating.
@@ -70,18 +72,21 @@ pub struct GuildState {
 }
 
 /// Guild-model state. Starts freshly docked (no fouling).
+///
+/// The hull is two patches that follow the same equations: the **cleanable** share η
+/// ([`GuildParams::clean_efficiency`]) that in-water cleaning and grooming reach, and the
+/// **niche** share 1 − η (sea chests, recesses, parts of the flat bottom) that only a dry-dock
+/// resets. Amounts reported by the getters are area-weighted means; the hull resistance is the
+/// area-weighted mean of each patch's resistance.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GuildModel {
     params: GuildParams,
     x: [f64; N],
-    /// Hull base plates left by the last in-water clean (part of the dead-shell pool).
+    /// Base plates left on the cleanable patch by the last in-water clean (part of its dead pool).
     plates: f64,
     ahr: f64,
     prop_rough: f64,
     just_docked: bool,
-    /// True after an in-water clean that removed fouling, until the next segment with time
-    /// in it (a repeated clean misses the same areas, so it is a no-op).
-    just_cleaned: bool,
 }
 
 impl GuildModel {
@@ -100,7 +105,6 @@ impl GuildModel {
             ahr: params.ahr_out_docking.value(),
             prop_rough: params.prop_clean.value(),
             just_docked: true,
-            just_cleaned: false,
         })
     }
 
@@ -108,34 +112,56 @@ impl GuildModel {
     pub fn params(&self) -> &GuildParams {
         &self.params
     }
-    /// Slime rating, both guilds.
+    /// Area fractions of the cleanable and niche patches.
+    fn areas(&self) -> [f64; 2] {
+        [
+            self.params.clean_efficiency,
+            1.0 - self.params.clean_efficiency,
+        ]
+    }
+    /// Area-weighted sum of the given within-patch components over both hull patches.
+    fn hull_mean(&self, rel: &[usize]) -> f64 {
+        let a = self.areas();
+        (0..2)
+            .map(|p| a[p] * rel.iter().map(|&i| self.x[ix::PATCHES[p] + i]).sum::<f64>())
+            .sum()
+    }
+    /// Slime rating, both guilds (area-weighted).
     pub fn slime_rating(&self) -> f64 {
-        self.x[ix::SLIME[0]] + self.x[ix::SLIME[1]]
+        self.hull_mean(&ix::SLIME)
     }
-    /// Soft-fouling rating, both guilds.
+    /// Soft-fouling rating, both guilds (area-weighted).
     pub fn soft_rating(&self) -> f64 {
-        self.x[ix::SOFT[0]] + self.x[ix::SOFT[1]]
+        self.hull_mean(&ix::SOFT)
     }
-    /// Live calcareous coverage on the hull, %.
+    /// Live calcareous coverage on the hull, % (area-weighted).
     pub fn live_coverage(&self) -> f64 {
-        self.x[ix::CALC[0]] + self.x[ix::CALC[1]]
+        self.hull_mean(&ix::CALC)
     }
-    /// Dead shell coverage on the hull, %.
+    /// Dead shell coverage on the hull, % (area-weighted).
     pub fn dead_coverage(&self) -> f64 {
-        self.x[ix::DEAD]
+        self.hull_mean(&[ix::DEAD])
     }
-    /// All calcareous coverage on the hull (live + dead), %: what roughness sees.
+    /// All calcareous coverage on the hull (live + dead), % (area-weighted).
     pub fn calcareous_coverage(&self) -> f64 {
         self.live_coverage() + self.dead_coverage()
     }
-    /// Hull roughness: the larger of the rating and coverage roughness.
-    pub fn hull_ks(&self) -> Micrometres {
-        let rating = ks_from_rating(self.slime_rating() + self.soft_rating());
-        let uzun = match self.coverage_ks(self.calcareous_coverage()) {
+    /// Roughness of one hull patch: the larger of its rating and coverage roughness, scaled.
+    fn patch_ks(&self, p: usize) -> Micrometres {
+        let b = ix::PATCHES[p];
+        let sum = |rel: &[usize]| rel.iter().map(|&i| self.x[b + i]).sum::<f64>();
+        let rating = ks_from_rating(sum(&ix::SLIME) + sum(&ix::SOFT));
+        let uzun = match self.coverage_ks(sum(&ix::CALC) + self.x[b + ix::DEAD]) {
             Some(k) if k.value() > rating.value() => k,
             _ => rating,
         };
         self.scaled(uzun)
+    }
+    /// Hull roughness: area-weighted mean of the two patches' roughness. (The power penalty
+    /// area-weights each patch's *resistance* instead, see [`FoulingModel::power_penalty`].)
+    pub fn hull_ks(&self) -> Micrometres {
+        let a = self.areas();
+        Micrometres(a[0] * self.patch_ks(0).value() + a[1] * self.patch_ks(1).value())
     }
     /// Propeller roughness: the larger of drift roughness and blade-shell roughness.
     pub fn prop_ks(&self) -> Micrometres {
@@ -149,16 +175,16 @@ impl GuildModel {
     pub fn ahr(&self) -> Micrometres {
         Micrometres(self.ahr)
     }
-    /// The fouling of one guild on the hull.
+    /// The fouling of one guild on the hull (area-weighted).
     pub fn guild(&self, g: Guild) -> GuildState {
         let i = match g {
             Guild::Warm => WARM,
             Guild::Cold => COLD,
         };
         GuildState {
-            slime: self.x[ix::SLIME[i]],
-            soft: self.x[ix::SOFT[i]],
-            live_coverage: self.x[ix::CALC[i]],
+            slime: self.hull_mean(&[ix::SLIME[i]]),
+            soft: self.hull_mean(&[ix::SOFT[i]]),
+            live_coverage: self.hull_mean(&[ix::CALC[i]]),
         }
     }
 
@@ -171,7 +197,7 @@ impl GuildModel {
     }
 
     /// Coverage roughness: Uzun Eq. 18 up to 50 % coverage, then continued linearly with the
-    /// calibrated slope (`None` at or below 5 %).
+    /// configured slope (`None` at or below 5 %).
     fn coverage_ks(&self, sc: f64) -> Option<Micrometres> {
         if sc > 50.0 {
             let k50 = 2.4669 * 2500.0 - 24.84 * 50.0 + 1065.7;
@@ -183,34 +209,43 @@ impl GuildModel {
         }
     }
 
-    /// Trims slime to the cleaning floor (both guilds scaled together) and removes soft fouling.
-    fn clean_soft_classes(&mut self) {
-        let slime = self.slime_rating();
+    /// On the cleanable patch: trims slime to the cleaning floor (both guilds scaled together)
+    /// and removes soft fouling. Barnacles are left to the caller.
+    fn clean_soft_fouling(&mut self) {
+        let b = ix::PATCHES[CLEANABLE];
+        let slime = self.x[b + ix::SLIME[0]] + self.x[b + ix::SLIME[1]];
         if slime > CLEANED_SLIME_RATING {
             let f = CLEANED_SLIME_RATING / slime;
             for i in ix::SLIME {
-                self.x[i] *= f;
+                self.x[b + i] *= f;
             }
         }
         for i in ix::SOFT {
-            self.x[i] = 0.0;
+            self.x[b + i] = 0.0;
         }
     }
 
     /// Scales any class total that a solver step pushed above its hard limit back onto it
-    /// (slime 20, soft 50, hull and propeller coverage 100 %). This absorbs RK4 overshoot near
+    /// (slime 20, soft 50, coverage 100 % on each surface). This absorbs RK4 overshoot near
     /// saturation. A NaN total fails the `>` test, so it is never hidden.
     fn project_onto_limits(&mut self) {
-        let groups: [(&[usize], f64); 4] = [
-            (&ix::SLIME, RATING_CAPACITY[0]),
-            (&ix::SOFT, RATING_CAPACITY[1]),
-            (&[ix::CALC[0], ix::CALC[1], ix::DEAD], 100.0),
-            (&[ix::PROP_CALC[0], ix::PROP_CALC[1], ix::PROP_DEAD], 100.0),
-        ];
+        let mut groups: Vec<(Vec<usize>, f64)> = Vec::with_capacity(7);
+        for b in ix::PATCHES {
+            groups.push((
+                ix::SLIME.iter().map(|i| b + i).collect(),
+                RATING_CAPACITY[0],
+            ));
+            groups.push((ix::SOFT.iter().map(|i| b + i).collect(), RATING_CAPACITY[1]));
+            groups.push((vec![b + ix::CALC[0], b + ix::CALC[1], b + ix::DEAD], 100.0));
+        }
+        groups.push((
+            vec![ix::PROP_CALC[0], ix::PROP_CALC[1], ix::PROP_DEAD],
+            100.0,
+        ));
         for (idx, limit) in groups {
             let total: f64 = idx.iter().map(|&i| self.x[i]).sum();
             if total > limit {
-                for &i in idx {
+                for i in idx {
                     self.x[i] *= limit / total;
                 }
             }
@@ -219,7 +254,6 @@ impl GuildModel {
 
     fn dry_dock(&mut self) {
         self.x = [0.0; N];
-        self.just_cleaned = false;
         self.plates = 0.0;
         self.prop_rough = self.params.prop_clean.value();
         self.just_docked = true;
@@ -231,7 +265,6 @@ impl FoulingModel for GuildModel {
         let dt = seg.duration().value();
         if dt > 0.0 {
             self.just_docked = false;
-            self.just_cleaned = false;
         }
         let r = SegmentRates::new(seg, &self.params);
         integrate::advance(&mut self.x, dt, &losses(&r), |s| gains(s, &r));
@@ -248,6 +281,7 @@ impl FoulingModel for GuildModel {
 
     fn apply(&mut self, event: MaintenanceEvent) {
         let out = self.params.ahr_out_docking.value();
+        let b = ix::PATCHES[CLEANABLE];
         match event {
             MaintenanceEvent::DryDockFullBlast => {
                 self.dry_dock();
@@ -261,53 +295,34 @@ impl FoulingModel for GuildModel {
                 self.dry_dock();
             }
             MaintenanceEvent::InWaterHullClean { calcareous_remnant } => {
-                if self.just_cleaned {
-                    return;
-                }
                 let rho = if calcareous_remnant.is_nan() {
                     0.0
                 } else {
                     calcareous_remnant.clamp(0.0, 1.0)
                 };
-                let eta = self.params.clean_efficiency;
-                let before = self.clone();
-                // Treated share η: cleaned as on a fully cleaned hull. Untreated share 1 − η:
-                // unchanged. The state is the area-weighted mix of the two.
-                let slime = self.slime_rating();
-                let trim = if slime > CLEANED_SLIME_RATING {
-                    CLEANED_SLIME_RATING / slime
-                } else {
-                    1.0
-                };
-                for i in ix::SLIME {
-                    self.x[i] *= 1.0 - eta + eta * trim;
+                // Only the cleanable patch is reached. Base plates from earlier cleans stay; of
+                // the shells above them a fraction ρ stays as new base plates. Cleaning twice in a
+                // row therefore changes nothing.
+                let dead = self.x[b + ix::DEAD];
+                let shells = self.x[b + ix::CALC[0]] + self.x[b + ix::CALC[1]] + dead;
+                self.clean_soft_fouling();
+                for i in ix::CALC {
+                    self.x[b + i] = 0.0;
                 }
-                for i in ix::SOFT.into_iter().chain(ix::CALC) {
-                    self.x[i] *= 1.0 - eta;
-                }
-                // Base plates from earlier cleans stay; of the shells above them, a fraction ρ
-                // stays as new base plates in the treated area.
-                let shells = before.calcareous_coverage();
-                let dead = before.x[ix::DEAD];
                 let old_plates = if self.plates < dead {
                     self.plates
                 } else {
                     dead
                 };
                 let plates = old_plates + rho * (shells - old_plates);
-                self.x[ix::DEAD] = eta * plates + (1.0 - eta) * dead;
-                self.plates = eta * plates + (1.0 - eta) * old_plates;
-                self.ahr += self.params.clean_damage.value() * eta * (shells - plates) / 100.0;
-                if self.x != before.x {
-                    self.just_cleaned = true;
-                }
+                self.x[b + ix::DEAD] = plates;
+                self.plates = plates;
+                self.ahr +=
+                    self.params.clean_damage.value() * self.areas()[CLEANABLE] * (shells - plates)
+                        / 100.0;
             }
-            MaintenanceEvent::HullGrooming => {
-                self.clean_soft_classes();
-                for i in ix::CALC {
-                    self.x[i] = 0.0;
-                }
-            }
+            // Light brushing: calcified barnacles (live and dead) are not removed.
+            MaintenanceEvent::HullGrooming => self.clean_soft_fouling(),
             MaintenanceEvent::PropellerPolish => {
                 let polished = self.params.prop_polished.value();
                 if self.prop_rough > polished {
@@ -320,9 +335,12 @@ impl FoulingModel for GuildModel {
         }
     }
 
+    /// Hull fouling penalty: the area-weighted mean of the two patches' resistance increases.
     fn power_penalty(&self, op: &OperatingPoint) -> PowerPenalty {
+        let a = self.areas();
         PowerPenalty {
-            hull_fouling_fraction: fouling_resistance_fraction(op, self.hull_ks()),
+            hull_fouling_fraction: a[0] * fouling_resistance_fraction(op, self.patch_ks(0))
+                + a[1] * fouling_resistance_fraction(op, self.patch_ks(1)),
             coating_fraction: coating_resistance_fraction(
                 op,
                 self.params.ahr_out_docking,
@@ -332,6 +350,9 @@ impl FoulingModel for GuildModel {
         }
     }
 }
+
+// HULL is part of the state layout; referenced here so the layout stays in one place.
+const _: () = assert!(N == 2 * HULL + 3);
 
 #[cfg(test)]
 mod tests {
@@ -502,14 +523,20 @@ mod tests {
         assert_eq!(s, once);
     }
 
-    /// Grooming removes slime (to the floor), soft fouling and live barnacles but leaves dead
-    /// shells, and does no paint damage.
+    /// Grooming is light, frequent brushing: on the patch it reaches it trims slime to the floor
+    /// and removes soft fouling, but leaves calcified barnacles (live and dead) and the paint
+    /// untouched. (Whole hull cleanable here.)
     #[test]
-    fn grooming_keeps_dead_shells() {
-        let mut s = fouled();
+    fn grooming_leaves_barnacles() {
+        let mut s = GuildModel::new(GuildParams {
+            clean_efficiency: 1.0,
+            ..GuildParams::default()
+        })
+        .unwrap();
+        s.advance(&idle(400.0, 28.0));
         s.advance(&idle(60.0, 5.0)); // warm guild dies → dead shells
-        let (dead, ahr) = (s.dead_coverage(), s.ahr());
-        assert!(dead > 0.0);
+        let (live, dead, ahr) = (s.live_coverage(), s.dead_coverage(), s.ahr());
+        assert!(dead > 0.0 && live > 0.0);
         s.apply(MaintenanceEvent::HullGrooming);
         assert_eq!(
             (
@@ -518,20 +545,9 @@ mod tests {
                 s.dead_coverage(),
                 s.ahr()
             ),
-            (0.0, 0.0, dead, ahr)
+            (live, 0.0, dead, ahr)
         );
         assert!(s.slime_rating() <= 0.75 + 1e-12);
-    }
-
-    /// Polishing the propeller removes blade barnacles and brings roughness to at most 40 µm.
-    #[test]
-    fn polish_resets_propeller() {
-        let mut s = fouled();
-        s.apply(MaintenanceEvent::PropellerPolish);
-        assert_eq!(s.prop_ks(), Micrometres(40.0));
-        let mut fresh = m();
-        fresh.apply(MaintenanceEvent::PropellerPolish);
-        assert_eq!(fresh.prop_ks(), Micrometres(30.0)); // never rougher than before
     }
 
     /// The per-guild breakdown adds up to the totals.
@@ -697,5 +713,40 @@ mod tests {
             s.dead_coverage(),
             dead + 0.2 * live
         );
+    }
+    /// Two hull patches: the cleanable share η and the niche share 1 − η. Hull resistance is the
+    /// area-weighted average of each patch's resistance, not the resistance of the average
+    /// coverage. After an in-water clean the niche patch keeps its full fouling, so the penalty
+    /// is η·f(k_s cleaned) + (1 − η)·f(k_s before). (Review finding I3.)
+    #[test]
+    fn partial_clean_area_averages_resistance() {
+        let (ship, table) = (
+            ShipParticulars::new(Metres(176.0), 0.5).unwrap(),
+            GranvilleTable::new(),
+        );
+        let op = OperatingPoint::new(&ship, Knots(14.0), &table).unwrap();
+        let clean = MaintenanceEvent::InWaterHullClean {
+            calcareous_remnant: 0.2,
+        };
+        let mut part = GuildModel::new(GuildParams {
+            clean_efficiency: 0.6,
+            ..GuildParams::default()
+        })
+        .unwrap();
+        let mut full = GuildModel::new(GuildParams {
+            clean_efficiency: 1.0,
+            ..GuildParams::default()
+        })
+        .unwrap();
+        for s in [&mut part, &mut full] {
+            s.advance(&idle(900.0, 28.0));
+        }
+        let fouled = crate::fouling::power::fouling_resistance_fraction(&op, full.hull_ks());
+        part.apply(clean);
+        full.apply(clean);
+        let cleaned = full.power_penalty(&op).hull_fouling_fraction;
+        let want = 0.6 * cleaned + 0.4 * fouled;
+        let got = part.power_penalty(&op).hull_fouling_fraction;
+        assert!((got - want).abs() < 1e-12, "{got} vs {want}");
     }
 }

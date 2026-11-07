@@ -171,35 +171,37 @@ mod tests {
         GuildParams::default().guilds[COLD]
     }
 
-    /// Thermal performance curve: Q10 rise to the optimum, linear fall to zero at T_max,
-    /// zero above; the cold guild peaks at the same rate at its own optimum.
+    /// Thermal performance curve: Q10 rise to the 31 °C optimum, linear fall to zero at 38 °C,
+    /// zero above; the cold guild follows the same curve up to its own 13 °C optimum.
     /// Expected values: the formula by hand (0.05·2^((15−25)/10) = 0.025, etc.).
     #[test]
     fn thermal_rate_curve() {
         let w = warm();
         let r = |t: f64| thermal_rate(0.05, 2.0, &w, Celsius(t));
         assert!(close(r(15.0), 0.025, 1e-15));
-        assert!(close(r(29.0), 0.05 * 2f64.powf(0.4), 1e-15));
-        assert!(close(r(32.0), 0.5 * r(29.0), 1e-15));
-        assert_eq!((r(35.0), r(40.0)), (0.0, 0.0));
+        assert!(close(r(31.0), 0.05 * 2f64.powf(0.6), 1e-15));
+        assert!(close(r(34.5), 0.5 * r(31.0), 1e-15));
+        assert_eq!((r(38.0), r(40.0)), (0.0, 0.0));
+        // Both guilds share one curve (reference 25 °C): the cold guild at its 13 °C optimum
+        // grows as fast as the warm curve does at 13 °C, not faster.
         assert!(close(
             thermal_rate(0.05, 2.0, &cold(), Celsius(13.0)),
-            r(29.0),
+            r(13.0),
             1e-15
         ));
     }
 
     /// Breeding range with 1 °C ramps: warm guild breeds at ≥ 15 °C, half at 14.5 °C, not at
-    /// 13.9 °C, and half again at 35.5 °C.
+    /// 13.9 °C, and half again at 38.5 °C.
     #[test]
     fn breeding_edges() {
         let b = |t: f64| breeding(&warm(), Celsius(1.0), Celsius(t));
         assert!(close(b(14.5), 0.5, 1e-12));
         assert_eq!((b(15.0), b(13.9), b(25.0)), (1.0, 0.0, 1.0));
-        assert!(close(b(35.5), 0.5, 1e-12));
+        assert!(close(b(38.5), 0.5, 1e-12));
     }
 
-    /// Thermal mortality: zero inside the warm guild's 10–35 °C window, rising over 3 °C to
+    /// Thermal mortality: zero inside the warm guild's 10–38 °C window, rising over 3 °C to
     /// 0.1/day outside it; finite exactly on the window edges.
     #[test]
     fn thermal_mortality_ramps() {
@@ -207,8 +209,8 @@ mod tests {
         assert_eq!(m(20.0), 0.0);
         assert!(close(m(8.5), 0.05, 1e-15));
         assert_eq!((m(6.0), m(-2.0)), (0.1, 0.1));
-        assert!(close(m(36.5), 0.05, 1e-15));
-        assert_eq!((m(10.0), m(35.0)), (0.0, 0.0));
+        assert!(close(m(39.5), 0.05, 1e-15));
+        assert_eq!((m(10.0), m(38.0)), (0.0, 0.0));
     }
 
     /// Freshwater kills half of soft fouling per 3 h (1/16 left after 12 h) below 2 PSU; brackish

@@ -35,8 +35,9 @@ fn fit(
 fn with_class(base: &GuildParams, c: usize, v: &[f64]) -> GuildParams {
     let mut p = *base;
     let r = &mut p.classes[c];
+    // Settlement Q10 ≥ 1: settlement may not rise as water cools (review finding I1).
     (r.settle_ref, r.growth_ref, r.settle_q10, r.growth_q10) =
-        (v[0].exp(), v[1].exp(), v[2].exp(), v[3].exp());
+        (v[0].exp(), v[1].exp(), v[2].abs().exp(), v[3].exp());
     if c == CALCAREOUS {
         (p.capacity_17, p.capacity_25) = (v[4], v[5]);
     }

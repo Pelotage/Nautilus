@@ -213,10 +213,11 @@ fn hundley_cleaning_sequence_pattern() {
 }
 
 /// The Hundley pattern for the guild model: propeller polish helps, the hull clean helps more,
-/// and a small non-zero penalty remains (paint damage, base plates and the slime floor).
-/// Hundley's destroyer had a thorough naval clean (+70 % → +9 %), so the whole hull is treated
-/// (η = 1). The default η = 0.63 is fitted to Adland's routine commercial cleans, which a
-/// destroyer's clean does not represent.
+/// and a small non-zero penalty remains. Oracle: Hundley via GloFouling (+70 % → +9 %).
+///
+/// Settled decision (user, 2026-11-07): Hundley's destroyer had a thorough naval clean, so this
+/// runs with the whole hull cleanable (η = 1). The default η = 0.39 represents routine
+/// commercial cleans (Adland, Layer 3). The two cannot share one default; do not re-litigate.
 #[test]
 fn guild_hundley_cleaning_sequence_pattern() {
     let thorough = GuildParams {

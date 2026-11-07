@@ -312,6 +312,14 @@ now has a cleaning efficiency η: the share of the hull a clean treats. The untr
 keeps its fouling, and a repeated clean with no time in between is a no-op. κ is fixed at
 10 µm. The result is η = 0.630, giving a ratio of 2.000.
 
+**Final-review amendments (2026-11-07, agreed with the user).** The hull is two patches (a
+cleanable share η and a niche share 1 − η), and resistance is area-weighted. Grooming leaves
+calcified barnacles. Priors: warm guild T_opt / T_max / lethal-high 31 / 38 / 38 °C; cold guild
+breeds up to 15 °C; both guilds share the warm thermal curve (reference 25 °C); settlement
+Q10 ≥ 1. Refit results: η = 0.392 (Adland 2.000), λ = 0.519, soft gap 1.42. The Hundley
+pattern is tested with η = 1 (a thorough clean): one default cannot match both Adland and
+Hundley. See `docs/methodology/ocean-fouling.md`, "Settled decisions".
+
 **Tool.** `crates/nautilus-ocean/examples/calibrate_fouling.rs`:
 - runs the three layers with Nelder–Mead, using a fixed iteration count and fixed starting
   points, so it is deterministic and adds no dependency;
