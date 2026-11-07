@@ -1,7 +1,7 @@
 //! Parameters of the fouling models, their defaults (with sources) and the shared
 //! validation helpers.
 
-use nautilus_units::{Celsius, Days, Micrometres, Psu};
+use nautilus_units::{Celsius, Days, Knots, Micrometres, MilligramsPerCubicMetre, Psu};
 
 use super::FoulingError;
 use super::environment::{GateParams, SalinityResponse, TemperatureResponse};
@@ -211,5 +211,382 @@ impl Default for AgeClockParams {
             prop_drift_per_year: Micrometres(100.0),
             prop_rough_cap: Micrometres(300.0),
         }
+    }
+}
+
+/// Thermal window of one guild (a community adapted to warm or to cold water).
+/// All values: assumption — calibrate (literature priors, research spec Section on
+/// temperature tolerance).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GuildWindow {
+    /// Temperature at which [`ClassRates`] `*_ref` values apply (warm 25 °C; cold 9 °C so
+    /// both guilds have the same peak rate at their own optimum).
+    pub rate_ref_temp: Celsius,
+    /// Optimum temperature: rates rise by Q10 up to here.
+    pub t_opt: Celsius,
+    /// Rates fall linearly from `t_opt` to zero here.
+    pub t_max: Celsius,
+    /// Below this temperature the guild dies off.
+    pub lethal_low: Celsius,
+    /// Above this temperature the guild dies off.
+    pub lethal_high: Celsius,
+    /// Lower end of the breeding (larval settlement) range.
+    pub breed_low: Celsius,
+    /// Upper end of the breeding range.
+    pub breed_high: Celsius,
+}
+
+/// Settlement and growth rates of one fouling class at the guild's reference temperature.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ClassRates {
+    /// Settlement rate at the reference temperature (rating or % per day).
+    pub settle_ref: f64,
+    /// Growth rate at the reference temperature (per day).
+    pub growth_ref: f64,
+    /// Q10 of settlement.
+    pub settle_q10: f64,
+    /// Q10 of growth.
+    pub growth_q10: f64,
+}
+
+/// Speed-driven detachment of a soft class: `rate_per_knot · max(0, v − threshold)` per day.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Detachment {
+    /// Detachment rate per day per knot above the threshold.
+    pub rate_per_knot: f64,
+    /// Speed through water below which nothing detaches.
+    pub threshold: Knots,
+}
+
+/// Index of the warm guild in [`GuildParams::guilds`].
+pub const WARM: usize = 0;
+/// Index of the cold guild in [`GuildParams::guilds`].
+pub const COLD: usize = 1;
+/// Index of slime in [`GuildParams::classes`] (and of [`GuildParams::detachment`]).
+pub const SLIME: usize = 0;
+/// Index of soft fouling in [`GuildParams::classes`] (and of [`GuildParams::detachment`]).
+pub const SOFT: usize = 1;
+/// Index of calcareous fouling in [`GuildParams::classes`].
+pub const CALCAREOUS: usize = 2;
+
+/// Parameters of the guild model (`guild_model.rs`). See [`GuildParams::default`] for
+/// values and their status (prior or fitted).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GuildParams {
+    /// Coating type; only self-polishing is supported.
+    pub coating: CoatingType,
+    /// Settlement / propagule / growth gate.
+    pub gate: GateParams,
+    /// Salinity response of slime and soft fouling (stenohaline). Assumption — calibrate.
+    pub soft_salinity: SalinityResponse,
+    /// Salinity response of calcareous fouling (euryhaline). Assumption — calibrate.
+    pub hard_salinity: SalinityResponse,
+    /// Thermal windows, indexed by [`WARM`] and [`COLD`].
+    pub guilds: [GuildWindow; 2],
+    /// Class rates, indexed by [`SLIME`], [`SOFT`], [`CALCAREOUS`] (warm-guild reference;
+    /// the cold guild uses the same values at its own reference temperature).
+    pub classes: [ClassRates; 3],
+    /// Maximum thermal and brackish mortality, per day (0.1: a stranded community largely
+    /// dies within a month). Assumption — calibrate.
+    pub mortality_max: f64,
+    /// Width of the ramp from zero to maximum mortality outside the lethal window (3 °C).
+    /// Assumption — calibrate.
+    pub mortality_ramp: Celsius,
+    /// Width of the ramp at the edges of the breeding range (1 °C). Assumption — calibrate.
+    pub breeding_ramp: Celsius,
+    /// Salinity below which freshwater mortality applies (2 PSU).
+    pub fresh_threshold: Psu,
+    /// Freshwater mortality of slime and soft fouling, per day (ln 2 / 0.125: half killed per
+    /// 3 h, from 3–4 h tunicate kill times).
+    pub fresh_mortality_soft: f64,
+    /// Freshwater mortality of live barnacles, per day (ln 2 / 3). Assumption — calibrate.
+    pub fresh_mortality_hard: f64,
+    /// Food multiplier strength α in `1 + α·chl/(chl + K)` (0: no effect until calibrated).
+    pub food_alpha: f64,
+    /// Food half-saturation K (1 mg/m³). Assumption — calibrate.
+    pub food_half_saturation: MilligramsPerCubicMetre,
+    /// Detachment of slime and soft fouling, indexed by [`SLIME`] and [`SOFT`] (rate 0 for
+    /// self-polishing paint; thresholds 30 kn and 10 kn from foul-release release speeds).
+    pub detachment: [Detachment; 2],
+    /// Calcareous capacity at 17 °C, % coverage. Fitted (Layer 1).
+    pub capacity_17: f64,
+    /// Calcareous capacity at 25 °C, % coverage. Fitted (Layer 1).
+    pub capacity_25: f64,
+    /// Floor of the calcareous capacity line, % coverage (10). Assumption — calibrate.
+    pub capacity_min: f64,
+    /// Weathering of dead shells, per day. Fitted (Layer 1).
+    pub weathering_per_day: f64,
+    /// Slope of the coverage-to-roughness mapping above 50 % coverage, µm per % (Uzun
+    /// Eq. 18 gives 80). Fitted (Layer 2).
+    pub high_coverage_slope: f64,
+    /// Paint roughness added per 100 % calcareous coverage scraped off by an in-water clean.
+    /// Fitted (Layer 3).
+    pub clean_damage: Micrometres,
+    /// Coating AHR out of dry-dock (120 µm).
+    pub ahr_out_docking: Micrometres,
+    /// Coating AHR growth per year (20 µm). Assumption — calibrate.
+    pub ahr_drift_per_year: Micrometres,
+    /// Fraction of excess coating roughness recovered by a spot repair (0.5). Assumption —
+    /// calibrate.
+    pub spot_repair_recovery: f64,
+    /// Propeller roughness when new or after dry-dock (30 µm). Assumption — calibrate.
+    pub prop_clean: Micrometres,
+    /// Propeller roughness after polishing (40 µm). Assumption — calibrate.
+    pub prop_polished: Micrometres,
+    /// Propeller roughness growth per year (100 µm). Assumption — calibrate.
+    pub prop_drift_per_year: Micrometres,
+    /// Cap on drift-driven propeller roughness (300 µm). Assumption — calibrate.
+    pub prop_rough_cap: Micrometres,
+}
+
+impl Default for GuildParams {
+    fn default() -> Self {
+        let window = |r, o, m, ll, lh, bl, bh| GuildWindow {
+            rate_ref_temp: Celsius(r),
+            t_opt: Celsius(o),
+            t_max: Celsius(m),
+            lethal_low: Celsius(ll),
+            lethal_high: Celsius(lh),
+            breed_low: Celsius(bl),
+            breed_high: Celsius(bh),
+        };
+        let rates = |s, g, qs, qg| ClassRates {
+            settle_ref: s,
+            growth_ref: g,
+            settle_q10: qs,
+            growth_q10: qg,
+        };
+        GuildParams {
+            coating: CoatingType::SelfPolishing,
+            gate: GateParams::default(),
+            soft_salinity: SalinityResponse::STENOHALINE,
+            hard_salinity: SalinityResponse::EURYHALINE,
+            guilds: [
+                window(25.0, 29.0, 35.0, 10.0, 35.0, 15.0, 35.0),
+                window(9.0, 13.0, 24.0, -2.0, 24.0, -2.0, 12.0),
+            ],
+            // Provisional starting values; replaced by the Layer 1 fit.
+            classes: [
+                rates(0.01, 2.0 / 37.08, 2.0, 4.16),
+                rates(0.001, 2.0 / 73.11, 2.0, 1.54),
+                rates(0.01, 0.0407, 2.0, 2.04),
+            ],
+            mortality_max: 0.1,
+            mortality_ramp: Celsius(3.0),
+            breeding_ramp: Celsius(1.0),
+            fresh_threshold: Psu(2.0),
+            fresh_mortality_soft: std::f64::consts::LN_2 / 0.125,
+            fresh_mortality_hard: std::f64::consts::LN_2 / 3.0,
+            food_alpha: 0.0,
+            food_half_saturation: MilligramsPerCubicMetre(1.0),
+            detachment: [
+                Detachment {
+                    rate_per_knot: 0.0,
+                    threshold: Knots(30.0),
+                },
+                Detachment {
+                    rate_per_knot: 0.0,
+                    threshold: Knots(10.0),
+                },
+            ],
+            capacity_17: 50.0,
+            capacity_25: 100.0,
+            capacity_min: 10.0,
+            weathering_per_day: 0.001,
+            high_coverage_slope: 80.0,
+            clean_damage: Micrometres(0.0),
+            ahr_out_docking: Micrometres(120.0),
+            ahr_drift_per_year: Micrometres(20.0),
+            spot_repair_recovery: 0.5,
+            prop_clean: Micrometres(30.0),
+            prop_polished: Micrometres(40.0),
+            prop_drift_per_year: Micrometres(100.0),
+            prop_rough_cap: Micrometres(300.0),
+        }
+    }
+}
+
+impl GuildParams {
+    /// Checks every parameter: all finite; rates and ramps non-negative (Q10s, ramps and the
+    /// food half-saturation positive); fractions in [0, 1]; each guild window ordered
+    /// (`t_opt < t_max`, `lethal_low < lethal_high`, `breed_low < breed_high`); capacities
+    /// in (0, 100] with `capacity_min ≤ min(capacity_17, capacity_25)`. The coating type is
+    /// checked by the model, not here.
+    pub fn validate(&self) -> Result<(), FoulingError> {
+        check_responses(&[], &[self.soft_salinity, self.hard_salinity], &self.gate)?;
+        for w in &self.guilds {
+            let t = [
+                w.rate_ref_temp,
+                w.t_opt,
+                w.t_max,
+                w.lethal_low,
+                w.lethal_high,
+                w.breed_low,
+                w.breed_high,
+            ];
+            if t.iter().any(|c| !c.value().is_finite()) {
+                return Err(FoulingError::InvalidParameter("guild window temperature"));
+            }
+            if !(w.t_opt.value() < w.t_max.value()
+                && w.lethal_low.value() < w.lethal_high.value()
+                && w.breed_low.value() < w.breed_high.value())
+            {
+                return Err(FoulingError::InvalidParameter("guild window order"));
+            }
+        }
+        for c in &self.classes {
+            check_non_negative(c.settle_ref, "settle_ref")?;
+            check_non_negative(c.growth_ref, "growth_ref")?;
+            check_positive(c.settle_q10, "settle_q10")?;
+            check_positive(c.growth_q10, "growth_q10")?;
+        }
+        for d in &self.detachment {
+            check_non_negative(d.rate_per_knot, "detachment rate")?;
+            check_non_negative(d.threshold.value(), "detachment threshold")?;
+        }
+        for (v, what) in [
+            (self.mortality_max, "mortality_max"),
+            (self.fresh_threshold.value(), "fresh_threshold"),
+            (self.fresh_mortality_soft, "fresh_mortality_soft"),
+            (self.fresh_mortality_hard, "fresh_mortality_hard"),
+            (self.food_alpha, "food_alpha"),
+            (self.weathering_per_day, "weathering_per_day"),
+            (self.high_coverage_slope, "high_coverage_slope"),
+            (self.clean_damage.value(), "clean_damage"),
+            (self.ahr_out_docking.value(), "ahr_out_docking"),
+            (self.ahr_drift_per_year.value(), "ahr_drift_per_year"),
+            (self.prop_clean.value(), "prop_clean"),
+            (self.prop_polished.value(), "prop_polished"),
+            (self.prop_drift_per_year.value(), "prop_drift_per_year"),
+            (self.prop_rough_cap.value(), "prop_rough_cap"),
+        ] {
+            check_non_negative(v, what)?;
+        }
+        check_positive(self.mortality_ramp.value(), "mortality_ramp")?;
+        check_positive(self.breeding_ramp.value(), "breeding_ramp")?;
+        check_positive(self.food_half_saturation.value(), "food_half_saturation")?;
+        check_fraction(self.spot_repair_recovery, "spot_repair_recovery")?;
+        for (v, what) in [
+            (self.capacity_17, "capacity_17"),
+            (self.capacity_25, "capacity_25"),
+            (self.capacity_min, "capacity_min"),
+        ] {
+            if !(v > 0.0 && v <= 100.0) {
+                return Err(FoulingError::InvalidParameter(what));
+            }
+        }
+        if self.capacity_min > self.capacity_17 || self.capacity_min > self.capacity_25 {
+            return Err(FoulingError::InvalidParameter(
+                "capacity_min above capacity",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bad(p: GuildParams) -> bool {
+        matches!(p.validate(), Err(FoulingError::InvalidParameter(_)))
+    }
+
+    /// The default guild parameters (literature priors plus fitted values) pass validation.
+    #[test]
+    fn defaults_are_valid() {
+        assert_eq!(GuildParams::default().validate(), Ok(()));
+    }
+
+    /// Each numeric guild parameter rejects NaN and negative values, so no invalid number
+    /// can reach the solver.
+    #[test]
+    fn every_guild_rule_rejects_bad_values() {
+        type Set = fn(&mut GuildParams, f64);
+        let setters: [(&str, Set); 20] = [
+            ("settle_ref", |p, v| p.classes[0].settle_ref = v),
+            ("growth_ref", |p, v| p.classes[1].growth_ref = v),
+            ("settle_q10", |p, v| p.classes[2].settle_q10 = v),
+            ("growth_q10", |p, v| p.classes[0].growth_q10 = v),
+            ("mortality_max", |p, v| p.mortality_max = v),
+            ("mortality_ramp", |p, v| p.mortality_ramp = Celsius(v)),
+            ("breeding_ramp", |p, v| p.breeding_ramp = Celsius(v)),
+            ("fresh_threshold", |p, v| p.fresh_threshold = Psu(v)),
+            ("fresh_soft", |p, v| p.fresh_mortality_soft = v),
+            ("fresh_hard", |p, v| p.fresh_mortality_hard = v),
+            ("food_alpha", |p, v| p.food_alpha = v),
+            ("food_half", |p, v| {
+                p.food_half_saturation = MilligramsPerCubicMetre(v)
+            }),
+            ("detach_rate", |p, v| p.detachment[1].rate_per_knot = v),
+            ("detach_threshold", |p, v| {
+                p.detachment[0].threshold = Knots(v)
+            }),
+            ("weathering", |p, v| p.weathering_per_day = v),
+            ("slope", |p, v| p.high_coverage_slope = v),
+            ("clean_damage", |p, v| p.clean_damage = Micrometres(v)),
+            ("ahr_out", |p, v| p.ahr_out_docking = Micrometres(v)),
+            ("prop_drift", |p, v| p.prop_drift_per_year = Micrometres(v)),
+            ("recovery", |p, v| {
+                p.spot_repair_recovery = if v < 0.0 { 2.0 } else { v }
+            }),
+        ];
+        for (name, set) in setters {
+            for v in [f64::NAN, -1.0] {
+                let mut p = GuildParams::default();
+                set(&mut p, v);
+                assert!(bad(p), "{name} = {v}");
+            }
+        }
+        let mut p = GuildParams::default();
+        p.guilds[1].t_opt = Celsius(f64::NAN);
+        assert!(bad(p), "NaN window temperature");
+    }
+
+    /// Windows whose edges coincide or are reversed are rejected (a zero-width window would
+    /// divide by zero in the rate functions).
+    #[test]
+    fn window_edges_rejected() {
+        type Set = fn(&mut GuildWindow);
+        let cases: [(&str, Set); 4] = [
+            ("t_opt == t_max", |w| w.t_max = w.t_opt),
+            ("lethal_low == lethal_high", |w| {
+                w.lethal_high = w.lethal_low
+            }),
+            ("breed_low == breed_high", |w| w.breed_high = w.breed_low),
+            ("t_opt > t_max", |w| {
+                w.t_opt = Celsius(w.t_max.value() + 1.0)
+            }),
+        ];
+        for (name, set) in cases {
+            for g in 0..2 {
+                let mut p = GuildParams::default();
+                set(&mut p.guilds[g]);
+                assert!(bad(p), "guild {g}: {name}");
+            }
+        }
+    }
+
+    /// Calcareous capacities must lie in (0, 100] % and the floor must not exceed either
+    /// fitted capacity.
+    #[test]
+    fn capacity_bounds() {
+        let d = GuildParams::default();
+        assert!(bad(GuildParams {
+            capacity_17: 0.0,
+            ..d
+        }));
+        assert!(bad(GuildParams {
+            capacity_25: 101.0,
+            ..d
+        }));
+        assert!(bad(GuildParams {
+            capacity_min: d.capacity_17 + 1.0,
+            ..d
+        }));
+        assert!(bad(GuildParams {
+            capacity_min: 0.0,
+            ..d
+        }));
     }
 }
