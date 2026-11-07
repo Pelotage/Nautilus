@@ -1,5 +1,5 @@
 //! Rate functions of the guild model: pure functions of the environment and the
-//! parameters (spec Section 5.3), and [`SegmentRates`], the constant rates of one segment.
+//! parameters (spec Section 5.3), and `SegmentRates`, the constant rates of one segment.
 
 use nautilus_units::{Celsius, Knots, MilligramsPerCubicMetre, Psu};
 
