@@ -57,6 +57,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
+    write_scenario(&mut io::stdout().lock())
+}
+
+/// Writes the CSV trajectories and summary lines to `out` (used by `main` and by the
+/// `fouling_example` test).
+pub fn write_scenario(out: &mut impl Write) -> Result<(), Box<dyn Error>> {
     let timeline = equatorial_profile(5.0)?;
     let (ship, table) = (
         ShipParticulars::new(Metres(176.0), 0.5)?,
@@ -93,7 +99,6 @@ fn run() -> Result<(), Box<dyn Error>> {
         ));
     }
 
-    let mut out = io::stdout().lock();
     writeln!(
         out,
         "day,stage,policy,hull_fouling_fraction,coating_fraction,propeller_eta_loss,power_factor,event"

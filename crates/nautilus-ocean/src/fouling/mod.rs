@@ -11,6 +11,34 @@
 //! closed form; no ODE solver is involved and runs are fully deterministic.
 //!
 //! Spec: `research/reports/Biofouling growth dynamical model.md`.
+//!
+//! # Example
+//!
+//! A tanker idles 200 days at a 25 °C berth; the Stage 1 model turns that into a power
+//! penalty, and a dry-docking resets it to the clean hull:
+//!
+//! ```
+//! use nautilus_ocean::fouling::environment::{PortStatus, Segment};
+//! use nautilus_ocean::fouling::events::MaintenanceEvent;
+//! use nautilus_ocean::fouling::granville::GranvilleTable;
+//! use nautilus_ocean::fouling::power::ShipParticulars;
+//! use nautilus_ocean::fouling::stage1::{Stage1Model, Stage1Params};
+//! use nautilus_ocean::fouling::{FoulingModel, OperatingPoint};
+//! use nautilus_units::{Celsius, Days, Kilometres, Knots, Metres, Psu};
+//!
+//! let berth = Segment::new(Days(200.0), Knots(0.0), Celsius(25.0), Psu(35.0), PortStatus::Berth, Kilometres(0.0))?;
+//! let mut model = Stage1Model::new(Stage1Params::default())?;
+//! model.advance(&berth);
+//! assert!((model.hull_fouling_fraction() - 0.24).abs() < 1e-12); // 0.0012 per idle day
+//!
+//! let (ship, table) = (ShipParticulars::new(Metres(176.0), 0.5)?, GranvilleTable::new());
+//! let op = OperatingPoint::new(&ship, Knots(14.0), &table)?;
+//! assert!(model.power_penalty(&op).power_factor() > 1.24);
+//!
+//! model.apply(MaintenanceEvent::DryDockFullBlast);
+//! assert_eq!(model.power_penalty(&op).power_factor(), 1.0);
+//! # Ok::<(), nautilus_ocean::fouling::FoulingError>(())
+//! ```
 
 use std::fmt;
 
@@ -97,3 +125,27 @@ impl fmt::Display for FoulingError {
 }
 
 impl std::error::Error for FoulingError {}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Error messages name what was wrong, so a bad input can be traced.
+    #[test]
+    fn error_messages_name_the_problem() {
+        assert_eq!(
+            FoulingError::InvalidSegment("salinity").to_string(),
+            "invalid segment: salinity"
+        );
+        assert_eq!(
+            FoulingError::InvalidParameter("q10").to_string(),
+            "invalid parameter: q10"
+        );
+        assert!(
+            FoulingError::UnsupportedCoating
+                .to_string()
+                .contains("unsupported coating")
+        );
+        let e: Box<dyn std::error::Error> = Box::new(FoulingError::UnsupportedCoating);
+        assert!(e.source().is_none());
+    }
+}

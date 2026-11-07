@@ -81,6 +81,27 @@ pub struct TrajectoryPoint {
 /// A policy clean is an `InWaterHullClean { calcareous_remnant: 0.0 }` followed
 /// by a `PropellerPolish`, each its own zero-duration point. Any timeline
 /// dry-docking resets the policy to wait for its first trigger again.
+///
+/// ```
+/// use nautilus_ocean::fouling::environment::{PortStatus, Segment};
+/// use nautilus_ocean::fouling::events::MaintenanceEvent;
+/// use nautilus_ocean::fouling::granville::GranvilleTable;
+/// use nautilus_ocean::fouling::power::ShipParticulars;
+/// use nautilus_ocean::fouling::simulate::{simulate, CleaningPolicy, TimelineItem};
+/// use nautilus_ocean::fouling::stage1::{Stage1Model, Stage1Params};
+/// use nautilus_ocean::fouling::OperatingPoint;
+/// use nautilus_units::{Celsius, Days, Kilometres, Knots, Metres, Psu};
+///
+/// let berth = Segment::new(Days(200.0), Knots(0.0), Celsius(25.0), Psu(35.0), PortStatus::Berth, Kilometres(0.0))?;
+/// let (ship, table) = (ShipParticulars::new(Metres(176.0), 0.5)?, GranvilleTable::new());
+/// let op = OperatingPoint::new(&ship, Knots(14.0), &table)?;
+/// let mut model = Stage1Model::new(Stage1Params::default())?;
+/// let traj = simulate(&mut model, &[TimelineItem::Segment(berth)], CleaningPolicy::PROACTIVE, &op);
+/// // 200 idle days → 24% ≥ the 20% trigger, so the policy cleans hull and propeller.
+/// let events: Vec<_> = traj.iter().filter_map(|p| p.event).collect();
+/// assert_eq!(events, [MaintenanceEvent::InWaterHullClean { calcareous_remnant: 0.0 }, MaintenanceEvent::PropellerPolish]);
+/// # Ok::<(), nautilus_ocean::fouling::FoulingError>(())
+/// ```
 pub fn simulate<M: FoulingModel>(
     model: &mut M,
     timeline: &[TimelineItem],

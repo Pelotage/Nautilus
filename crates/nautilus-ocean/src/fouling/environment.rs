@@ -31,6 +31,17 @@ impl Segment {
     /// Builds a segment. Rejects non-finite values and negative duration,
     /// speed, salinity or distance with [`FoulingError::InvalidSegment`].
     /// A zero-duration segment is valid and is a no-op for every model.
+    ///
+    /// ```
+    /// use nautilus_ocean::fouling::environment::{PortStatus, Segment};
+    /// use nautilus_ocean::fouling::FoulingError;
+    /// use nautilus_units::{Celsius, Days, Kilometres, Knots, Psu};
+    ///
+    /// let ok = Segment::new(Days(1.5), Knots(12.0), Celsius(18.0), Psu(34.0), PortStatus::AtSea, Kilometres(80.0));
+    /// assert!(ok.is_ok());
+    /// let bad = Segment::new(Days(-1.0), Knots(12.0), Celsius(18.0), Psu(34.0), PortStatus::AtSea, Kilometres(80.0));
+    /// assert_eq!(bad, Err(FoulingError::InvalidSegment("duration")));
+    /// ```
     pub fn new(
         duration: Days,
         speed_through_water: Knots,
@@ -368,5 +379,85 @@ mod tests {
             )
             .is_err()
         );
+    }
+    /// Growth while sailing (δ, spec open item 8): with δ = 0.2 a ship at speed far offshore
+    /// still gets 20% exposure, a berthed ship stays at 100%, and a stationary ship 57.5 km
+    /// out (x = 0.51) gets 0.51 + 0.2 × 0.49. Expected values: gate = x + δ·(1 − x) by hand.
+    #[test]
+    fn sailing_fraction_blends_toward_full_exposure() {
+        let g = GateParams {
+            sailing_fraction: 0.2,
+            ..GateParams::default()
+        };
+        let seg = |v: f64, p: PortStatus, d: f64| {
+            Segment::new(
+                Days(1.0),
+                Knots(v),
+                Celsius(25.0),
+                Psu(35.0),
+                p,
+                Kilometres(d),
+            )
+            .unwrap()
+        };
+        let x_sea = g.settlement(Knots(14.0)) * 0.02;
+        assert!(close(
+            g.gate(&seg(14.0, PortStatus::AtSea, 300.0)),
+            x_sea + 0.2 * (1.0 - x_sea),
+            1e-15
+        ));
+        assert!(close(g.gate(&seg(0.0, PortStatus::Berth, 0.0)), 1.0, 1e-15));
+        assert!(close(
+            g.gate(&seg(0.0, PortStatus::AtSea, 57.5)),
+            0.51 + 0.2 * 0.49,
+            1e-12
+        ));
+        assert!(close(
+            g.propagule(PortStatus::Anchorage, Kilometres(250.0)),
+            1.0,
+            0.0
+        ));
+    }
+    /// Segment getters return exactly what was passed in.
+    #[test]
+    fn segment_getters_round_trip() {
+        let s = Segment::new(
+            Days(2.5),
+            Knots(3.0),
+            Celsius(18.0),
+            Psu(30.0),
+            PortStatus::Anchorage,
+            Kilometres(12.0),
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                s.duration(),
+                s.speed_through_water(),
+                s.sst(),
+                s.salinity(),
+                s.port(),
+                s.distance_to_coast()
+            ),
+            (
+                Days(2.5),
+                Knots(3.0),
+                Celsius(18.0),
+                Psu(30.0),
+                PortStatus::Anchorage,
+                Kilometres(12.0)
+            )
+        );
+        assert!(matches!(
+            Segment::new(
+                Days(1.0),
+                Knots(0.0),
+                Celsius(20.0),
+                Psu(35.0),
+                PortStatus::AtSea,
+                Kilometres(-1.0)
+            ),
+            Err(FoulingError::InvalidSegment("distance_to_coast"))
+        ));
     }
 }

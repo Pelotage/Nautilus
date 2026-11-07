@@ -53,6 +53,12 @@ impl GaussianRating {
 
     /// Age at which the rating equals `fr`: `t0 − τ·√ln(max/fr)`; 0 if
     /// `fr ≤ seed`, `t0` if `fr ≥ max`.
+    ///
+    /// ```
+    /// use nautilus_ocean::fouling::uzun::EQ_SLIME;
+    /// let age = EQ_SLIME.age_for_rating(10.0);
+    /// assert!((EQ_SLIME.rating(age) - 10.0).abs() < 1e-12);
+    /// ```
     pub fn age_for_rating(&self, fr: f64) -> f64 {
         if fr.is_nan() || fr <= self.seed() {
             0.0

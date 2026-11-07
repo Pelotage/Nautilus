@@ -455,4 +455,65 @@ mod tests {
         s.apply(MaintenanceEvent::DryDockSpotRepair);
         assert!(close(s.ahr().value(), 140.0, 1e-9));
     }
+    /// Stage 1 with growth while sailing (δ = 0.2): 100 days at 14 kn far offshore adds
+    /// ≈ 20 exposure days instead of ≈ 0.
+    #[test]
+    fn sailing_fraction_drives_stage1_clock() {
+        let p = Stage1Params {
+            gate: GateParams {
+                sailing_fraction: 0.2,
+                ..GateParams::default()
+            },
+            ..Stage1Params::default()
+        };
+        let mut s = Stage1Model::new(p).unwrap();
+        s.advance(&sail(100.0));
+        assert!(close(s.hull_exposure().value(), 20.0, 1e-6));
+    }
+    /// Every numeric Stage 1 parameter rejects NaN and negative values.
+    #[test]
+    fn every_parameter_rejects_nan_and_negative() {
+        let d = Stage1Params::default();
+        type Set = fn(&mut Stage1Params, f64);
+        let setters: [(&str, Set); 11] = [
+            ("slope", |p, v| p.slope_per_day = v),
+            ("hull_cap", |p, v| p.hull_cap = v),
+            ("ahr_out", |p, v| {
+                p.ahr_out_docking = nautilus_units::Micrometres(v)
+            }),
+            ("ahr_drift", |p, v| {
+                p.ahr_drift_per_year = nautilus_units::Micrometres(v)
+            }),
+            ("prop_drift", |p, v| p.prop_drift_per_year = v),
+            ("prop_cap", |p, v| p.prop_cap = v),
+            ("residual", |p, v| p.residual_exposure = Days(v)),
+            ("recovery", |p, v| p.spot_repair_recovery = v),
+            ("floor", |p, v| p.temperature.floor = v),
+            ("t_min", |p, v| {
+                p.temperature.t_min = Celsius(if v < 0.0 { f64::NAN } else { v })
+            }),
+            ("near_coast", |p, v| p.gate.near_coast = Kilometres(v)),
+        ];
+        for (name, set) in setters {
+            for v in [f64::NAN, -1.0] {
+                let mut p = d;
+                set(&mut p, v);
+                assert!(
+                    matches!(Stage1Model::new(p), Err(FoulingError::InvalidParameter(_))),
+                    "{name} = {v}"
+                );
+            }
+        }
+        let far_inside = Stage1Params {
+            gate: GateParams {
+                near_coast: Kilometres(200.0),
+                ..d.gate
+            },
+            ..d
+        };
+        assert!(
+            Stage1Model::new(far_inside).is_err(),
+            "near_coast beyond far_coast"
+        );
+    }
 }

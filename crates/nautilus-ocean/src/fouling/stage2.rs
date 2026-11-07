@@ -625,4 +625,103 @@ mod tests {
         s.apply(MaintenanceEvent::DryDockSpotRepair);
         assert!(close(s.ahr().value(), 140.0, 1e-9));
     }
+    /// Stage 2 grooming removes slime to the 0.75 floor, all soft fouling *and* the early
+    /// barnacles (coverage back to its age-0 value).
+    #[test]
+    fn grooming_removes_early_calcareous() {
+        let mut s = m();
+        s.advance(&idle(450.0, 25.0, 35.0));
+        assert!(s.calcareous_coverage() > 50.0);
+        s.apply(MaintenanceEvent::HullGrooming);
+        let seed_cov = crate::fouling::uzun::EQ_CALCAREOUS.coverage(
+            0.0,
+            crate::fouling::uzun::EQ_MAIN_ASYM,
+            crate::fouling::uzun::EQ_FAST_ASYM,
+        );
+        assert!(close(s.calcareous_coverage(), seed_cov, 1e-12));
+        assert!(close(s.slime_rating(), 0.75, 1e-9));
+        assert!(close(s.soft_rating(), EQ_SOFT.seed(), 1e-15));
+    }
+    /// Stage 2's coating penalty comes from paint roughness drift (20 µm/yr from 120 µm).
+    #[test]
+    fn coating_penalty_from_paint_drift() {
+        let (ship, table) = (
+            ShipParticulars::new(Metres(176.0), 0.5).unwrap(),
+            GranvilleTable::new(),
+        );
+        let op = OperatingPoint::new(&ship, Knots(14.0), &table).unwrap();
+        let mut s = m();
+        s.advance(&idle(365.25, 25.0, 35.0));
+        assert!(close(s.ahr().value(), 140.0, 1e-9));
+        let expected = crate::fouling::power::coating_resistance_fraction(
+            &op,
+            nautilus_units::Micrometres(120.0),
+            nautilus_units::Micrometres(140.0),
+        );
+        assert!(expected > 0.0 && close(s.power_penalty(&op).coating_fraction, expected, 1e-15));
+    }
+    /// The freshwater kill threshold is inclusive: exactly 3 h culls, just under does not.
+    #[test]
+    fn cull_threshold_is_inclusive() {
+        let mut base = m();
+        base.advance(&idle(500.0, 25.0, 35.0));
+        let (mut at, mut under) = (base.clone(), base.clone());
+        at.advance(&idle(0.125, 25.0, 0.3));
+        under.advance(&idle(0.125 - 1e-9, 25.0, 0.3));
+        assert!(close(at.soft_rating(), 25.0, 1e-6));
+        assert!(close(under.soft_rating(), 50.0, 1e-9));
+    }
+    /// Every Stage 2 parameter check: NaN / negative / out-of-range values are rejected,
+    /// as is a cold asymptote temperature at or above the warm one.
+    #[test]
+    fn every_parameter_check() {
+        let d = Stage2Params::default();
+        type Set = fn(&mut Stage2Params, f64);
+        let setters: [(&str, Set); 14] = [
+            ("cold_main", |p, v| p.cold_main_asym = v),
+            ("cold_fast", |p, v| p.cold_fast_asym = v),
+            ("fresh", |p, v| p.fresh_threshold = Psu(v)),
+            ("cull_min", |p, v| p.cull_min_duration = Days(v)),
+            ("cull", |p, v| p.cull_factor = v),
+            ("ahr_out", |p, v| {
+                p.ahr_out_docking = nautilus_units::Micrometres(v)
+            }),
+            ("ahr_drift", |p, v| {
+                p.ahr_drift_per_year = nautilus_units::Micrometres(v)
+            }),
+            ("recovery", |p, v| p.spot_repair_recovery = v),
+            ("prop_clean", |p, v| {
+                p.prop_clean = nautilus_units::Micrometres(v)
+            }),
+            ("prop_polished", |p, v| {
+                p.prop_polished = nautilus_units::Micrometres(v)
+            }),
+            ("prop_drift", |p, v| {
+                p.prop_drift_per_year = nautilus_units::Micrometres(v)
+            }),
+            ("prop_cap", |p, v| {
+                p.prop_rough_cap = nautilus_units::Micrometres(v)
+            }),
+            ("slime_q10", |p, v| p.slime_temp.q10 = v),
+            ("hard_salinity", |p, v| p.hard_salinity.full_at = Psu(v)),
+        ];
+        for (name, set) in setters {
+            for v in [f64::NAN, -1.0] {
+                let mut p = d;
+                set(&mut p, v);
+                assert!(
+                    matches!(Stage2Model::new(p), Err(FoulingError::InvalidParameter(_))),
+                    "{name} = {v}"
+                );
+            }
+        }
+        for (cold, warm) in [(25.0, 25.0), (26.0, 25.0), (f64::NAN, 25.0)] {
+            let p = Stage2Params {
+                cold_asym_temp: Celsius(cold),
+                warm_asym_temp: Celsius(warm),
+                ..d
+            };
+            assert!(Stage2Model::new(p).is_err(), "cold {cold} warm {warm}");
+        }
+    }
 }
