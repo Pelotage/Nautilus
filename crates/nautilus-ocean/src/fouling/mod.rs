@@ -14,8 +14,22 @@
 
 use std::fmt;
 
+use nautilus_units::Knots;
+
 pub mod environment;
 pub mod granville;
+pub mod power;
+
+/// Where and how fast the ship is operating when a penalty is evaluated.
+#[derive(Debug, Clone, Copy)]
+pub struct OperatingPoint<'a> {
+    /// Ship particulars.
+    pub ship: &'a power::ShipParticulars,
+    /// Speed through water.
+    pub speed: Knots,
+    /// Granville lookup table.
+    pub table: &'a granville::GranvilleTable,
+}
 
 /// Errors raised by the fouling model.
 #[derive(Debug, Clone, PartialEq, Eq)]
