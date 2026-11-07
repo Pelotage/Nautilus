@@ -6,7 +6,7 @@ use nautilus_units::Days;
 use super::environment::Segment;
 use super::events::MaintenanceEvent;
 use super::power::PowerPenalty;
-use super::{FoulingModel, OperatingPoint};
+use super::{FoulingError, FoulingModel, OperatingPoint};
 
 /// One item of a ship's timeline.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -17,32 +17,49 @@ pub enum TimelineItem {
     Event(MaintenanceEvent),
 }
 
-/// In-water cleaning policy applied by [`simulate`] on top of the timeline.
+/// In-water cleaning policy applied by [`simulate`] on top of the timeline: either no
+/// policy cleaning, or clean when the hull fouling fraction first reaches a trigger and
+/// then every `interval` until the next dry-docking.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum CleaningPolicy {
-    /// No policy cleaning.
-    None,
-    /// Clean when the hull fouling fraction first reaches `first_trigger`, then
-    /// every `interval` until the next dry-docking.
-    Triggered {
-        /// Hull fouling resistance fraction that triggers the first clean.
-        first_trigger: f64,
-        /// Interval between subsequent cleans.
-        interval: Days,
-    },
+pub struct CleaningPolicy {
+    trigger: Option<(f64, Days)>,
 }
 
 impl CleaningPolicy {
+    /// No policy cleaning.
+    pub const NONE: CleaningPolicy = CleaningPolicy { trigger: None };
     /// GloFouling proactive policy: first clean at 20%, then every 6 months.
-    pub const PROACTIVE: CleaningPolicy = CleaningPolicy::Triggered {
-        first_trigger: 0.20,
-        interval: Days(182.5),
+    pub const PROACTIVE: CleaningPolicy = CleaningPolicy {
+        trigger: Some((0.20, Days(182.5))),
     };
     /// GloFouling reactive policy: first clean at 40%, then every 12 months.
-    pub const REACTIVE: CleaningPolicy = CleaningPolicy::Triggered {
-        first_trigger: 0.40,
-        interval: Days(365.0),
+    pub const REACTIVE: CleaningPolicy = CleaningPolicy {
+        trigger: Some((0.40, Days(365.0))),
     };
+
+    /// A triggered policy: first clean when the hull fouling resistance fraction reaches
+    /// `first_trigger` (finite, ≥ 0), then every `interval` (finite, > 0).
+    pub fn triggered(first_trigger: f64, interval: Days) -> Result<Self, FoulingError> {
+        if !(first_trigger.is_finite() && first_trigger >= 0.0) {
+            return Err(FoulingError::InvalidParameter(
+                "cleaning policy first_trigger",
+            ));
+        }
+        if !(interval.value().is_finite() && interval.value() > 0.0) {
+            return Err(FoulingError::InvalidParameter("cleaning policy interval"));
+        }
+        Ok(CleaningPolicy {
+            trigger: Some((first_trigger, interval)),
+        })
+    }
+    /// Hull fouling fraction that triggers the first clean, if this policy cleans.
+    pub fn first_trigger(&self) -> Option<f64> {
+        self.trigger.map(|t| t.0)
+    }
+    /// Interval between subsequent cleans, if this policy cleans.
+    pub fn interval(&self) -> Option<Days> {
+        self.trigger.map(|t| t.1)
+    }
 }
 
 /// The state of the run after one timeline item or policy event.
@@ -103,11 +120,7 @@ pub fn simulate<M: FoulingModel>(
                     penalty,
                     event: None,
                 });
-                if let CleaningPolicy::Triggered {
-                    first_trigger,
-                    interval,
-                } = policy
-                {
+                if let Some((first_trigger, interval)) = policy.trigger {
                     let due = match last_clean {
                         None => penalty.hull_fouling_fraction >= first_trigger,
                         Some(t) => elapsed - t >= interval.value(),
@@ -195,11 +208,7 @@ mod tests {
             ShipParticulars::new(Metres(176.0), 0.5).unwrap(),
             GranvilleTable::new(),
         );
-        let op = OperatingPoint {
-            ship: &ship,
-            speed: Knots(14.0),
-            table: &table,
-        };
+        let op = OperatingPoint::new(&ship, Knots(14.0), &table).unwrap();
         simulate(
             &mut Stage1Model::new(Stage1Params::default()).unwrap(),
             timeline,
@@ -223,7 +232,7 @@ mod tests {
                 TimelineItem::Event(MaintenanceEvent::PropellerPolish),
                 sail(5.0),
             ],
-            CleaningPolicy::None,
+            CleaningPolicy::NONE,
         );
         assert_eq!(traj.len(), 3);
         assert_eq!(
@@ -276,7 +285,7 @@ mod tests {
     /// The mean power factor is weighted by how long each segment lasts.
     #[test]
     fn mean_is_duration_weighted() {
-        let traj = run(&[berth(100.0), sail(100.0)], CleaningPolicy::None);
+        let traj = run(&[berth(100.0), sail(100.0)], CleaningPolicy::NONE);
         let expected = (traj[0].penalty.power_factor() * 100.0
             + traj[1].penalty.power_factor() * 100.0)
             / 200.0;
@@ -293,5 +302,23 @@ mod tests {
             .map(|p| p.elapsed.value())
             .collect();
         assert_eq!(cleans, vec![200.0, 382.5]);
+    }
+    /// Cleaning-policy settings are checked: the interval must be positive and finite and
+    /// the trigger finite and non-negative; the GloFouling presets equal their constructor.
+    #[test]
+    fn policy_validation() {
+        assert!(CleaningPolicy::triggered(0.2, Days(0.0)).is_err());
+        assert!(CleaningPolicy::triggered(0.2, Days(-5.0)).is_err());
+        assert!(CleaningPolicy::triggered(f64::NAN, Days(10.0)).is_err());
+        assert!(CleaningPolicy::triggered(-0.1, Days(10.0)).is_err());
+        assert!(CleaningPolicy::triggered(0.2, Days(f64::INFINITY)).is_err());
+        assert_eq!(
+            CleaningPolicy::triggered(0.20, Days(182.5)).unwrap(),
+            CleaningPolicy::PROACTIVE
+        );
+        assert_eq!(
+            CleaningPolicy::triggered(0.40, Days(365.0)).unwrap(),
+            CleaningPolicy::REACTIVE
+        );
     }
 }

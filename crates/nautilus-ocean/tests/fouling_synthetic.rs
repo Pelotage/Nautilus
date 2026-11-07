@@ -103,11 +103,7 @@ fn with_op<R>(f: impl FnOnce(&OperatingPoint) -> R) -> R {
         ShipParticulars::new(Metres(176.0), 0.5).unwrap(),
         GranvilleTable::new(),
     );
-    f(&OperatingPoint {
-        ship: &ship,
-        speed: Knots(14.0),
-        table: &table,
-    })
+    f(&OperatingPoint::new(&ship, Knots(14.0), &table).unwrap())
 }
 
 fn stage1_rate(seg: &Segment) -> f64 {

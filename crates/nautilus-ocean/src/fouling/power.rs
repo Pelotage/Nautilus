@@ -55,15 +55,19 @@ pub fn reynolds(length: Metres, speed: Knots) -> f64 {
 /// Clean as-applied hull roughness `k_s` (the zero-penalty reference).
 pub const REFERENCE_KS: Micrometres = Micrometres(30.0);
 
+/// Largest roughness the power chain accepts (20 mm, beyond every source used here);
+/// rougher inputs are treated as this value rather than extrapolated.
+pub const MAX_KS: Micrometres = Micrometres(20_000.0);
+
 /// Fractional increase in total resistance from fouling roughness `ks`:
 /// `share · max(0, G(ks) − G(30 µm))`, `G` = Granville `ΔC_F/C_F` from the table.
-/// `ks` below the 30 µm reference counts as the reference.
+/// `ks` below the 30 µm reference counts as the reference, and above 20 mm as 20 mm.
 pub fn fouling_resistance_fraction(op: &OperatingPoint, ks: Micrometres) -> f64 {
     let length = op.ship.length();
     let re = reynolds(length, op.speed);
     let g = |k: Micrometres| op.table.delta_cf_ratio(re, k.to_metres() / length.value());
     let ks = if ks.value() > REFERENCE_KS.value() {
-        ks
+        Micrometres(ks.value().min(MAX_KS.value()))
     } else {
         REFERENCE_KS
     };
@@ -185,11 +189,7 @@ mod tests {
     #[test]
     fn fouling_fraction_relative_to_reference() {
         let (ship, table) = (tanker(), GranvilleTable::new());
-        let op = OperatingPoint {
-            ship: &ship,
-            speed: Knots(14.0),
-            table: &table,
-        };
+        let op = OperatingPoint::new(&ship, Knots(14.0), &table).unwrap();
         assert!(close(
             fouling_resistance_fraction(&op, Micrometres(30.0)),
             0.0,
@@ -217,11 +217,7 @@ mod tests {
             ShipParticulars::new(Metres(176.0), 1.0).unwrap(),
             GranvilleTable::new(),
         );
-        let op = OperatingPoint {
-            ship: &ship,
-            speed: Knots(14.0),
-            table: &table,
-        };
+        let op = OperatingPoint::new(&ship, Knots(14.0), &table).unwrap();
         assert!(close(
             coating_resistance_fraction(&op, Micrometres(120.0), Micrometres(150.0)),
             0.0197,
@@ -248,5 +244,36 @@ mod tests {
     fn ship_validation() {
         assert!(ShipParticulars::new(Metres(0.0), 0.5).is_err());
         assert!(ShipParticulars::new(Metres(100.0), 1.5).is_err());
+    }
+    /// Roughness beyond 20 mm (outside every source used) is treated as 20 mm, even on a
+    /// long ship where k_s/L would still be inside the lookup table.
+    #[test]
+    fn roughness_capped_at_20mm() {
+        let (ship, table) = (
+            ShipParticulars::new(Metres(400.0), 0.5).unwrap(),
+            GranvilleTable::new(),
+        );
+        let op = OperatingPoint::new(&ship, Knots(15.0), &table).unwrap();
+        let at_cap = fouling_resistance_fraction(&op, Micrometres(20_000.0));
+        assert_eq!(
+            fouling_resistance_fraction(&op, Micrometres(100_000.0)),
+            at_cap
+        );
+        assert!(fouling_resistance_fraction(&op, Micrometres(19_000.0)) < at_cap);
+    }
+    /// Operating speed must be finite and positive; otherwise friction coefficients are
+    /// meaningless (a NaN speed used to give a coating penalty ~15× too large).
+    #[test]
+    fn operating_point_validation() {
+        let (ship, table) = (tanker(), GranvilleTable::new());
+        for v in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert!(
+                OperatingPoint::new(&ship, Knots(v), &table).is_err(),
+                "speed {v}"
+            );
+        }
+        let op = OperatingPoint::new(&ship, Knots(14.0), &table).unwrap();
+        assert_eq!(op.speed(), Knots(14.0));
+        assert_eq!(op.ship().length(), Metres(176.0));
     }
 }

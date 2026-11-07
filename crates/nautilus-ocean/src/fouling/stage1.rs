@@ -134,6 +134,8 @@ pub struct Stage1Model {
     exposure: f64,
     ahr: f64,
     prop: f64,
+    /// True between a dry-docking and the next segment with time in it.
+    just_docked: bool,
 }
 
 impl Stage1Model {
@@ -163,6 +165,7 @@ impl Stage1Model {
             exposure: 0.0,
             ahr: params.ahr_out_docking.value(),
             prop: 0.0,
+            just_docked: true,
         })
     }
 
@@ -188,6 +191,9 @@ impl FoulingModel for Stage1Model {
     fn advance(&mut self, seg: &Segment) {
         let p = &self.params;
         let dt = seg.duration().value();
+        if dt > 0.0 {
+            self.just_docked = false;
+        }
         self.exposure += p.temperature.factor(seg.sst())
             * p.salinity.factor(seg.salinity())
             * p.gate.gate(seg)
@@ -205,11 +211,16 @@ impl FoulingModel for Stage1Model {
                 self.exposure = 0.0;
                 self.ahr = out;
                 self.prop = 0.0;
+                self.just_docked = true;
             }
             MaintenanceEvent::DryDockSpotRepair => {
                 self.exposure = 0.0;
-                self.ahr -= p.spot_repair_recovery * (self.ahr - out);
+                // A repeated docking record with no time in between is the same docking.
+                if !self.just_docked {
+                    self.ahr -= p.spot_repair_recovery * (self.ahr - out);
+                }
                 self.prop = 0.0;
+                self.just_docked = true;
             }
             MaintenanceEvent::InWaterHullClean { calcareous_remnant } => {
                 let rho = if calcareous_remnant.is_nan() {
@@ -369,11 +380,7 @@ mod tests {
             ShipParticulars::new(Metres(176.0), 0.5).unwrap(),
             GranvilleTable::new(),
         );
-        let p = s.power_penalty(&OperatingPoint {
-            ship: &ship,
-            speed: Knots(14.0),
-            table: &table,
-        });
+        let p = s.power_penalty(&OperatingPoint::new(&ship, Knots(14.0), &table).unwrap());
         assert!(
             p.power_factor().is_finite()
                 && p.hull_fouling_fraction <= 0.86
@@ -388,11 +395,7 @@ mod tests {
             ShipParticulars::new(Metres(176.0), 0.5).unwrap(),
             GranvilleTable::new(),
         );
-        let p = m().power_penalty(&OperatingPoint {
-            ship: &ship,
-            speed: Knots(14.0),
-            table: &table,
-        });
+        let p = m().power_penalty(&OperatingPoint::new(&ship, Knots(14.0), &table).unwrap());
         assert_eq!(p.power_factor(), 1.0);
     }
     /// Parameter values that would make the power factor NaN, infinite or negative
@@ -438,5 +441,18 @@ mod tests {
             ..d
         }));
         assert!(Stage1Model::new(d).is_ok());
+    }
+    /// A spot-repair docking recorded twice (duplicate record, no time at sea in between)
+    /// counts once: AHR 160 → 140, not 140 → 130. A later docking applies again.
+    #[test]
+    fn duplicate_spot_repair_counts_once() {
+        let mut s = m();
+        s.advance(&sail(2.0 * 365.25)); // AHR 160
+        s.apply(MaintenanceEvent::DryDockSpotRepair);
+        s.apply(MaintenanceEvent::DryDockSpotRepair);
+        assert!(close(s.ahr().value(), 140.0, 1e-9));
+        s.advance(&sail(365.25)); // AHR 160 again
+        s.apply(MaintenanceEvent::DryDockSpotRepair);
+        assert!(close(s.ahr().value(), 140.0, 1e-9));
     }
 }

@@ -41,12 +41,36 @@ pub trait FoulingModel {
 /// Where and how fast the ship is operating when a penalty is evaluated.
 #[derive(Debug, Clone, Copy)]
 pub struct OperatingPoint<'a> {
+    ship: &'a power::ShipParticulars,
+    speed: Knots,
+    table: &'a granville::GranvilleTable,
+}
+
+impl<'a> OperatingPoint<'a> {
+    /// Builds an operating point. `speed` (through water) must be finite and
+    /// positive: friction coefficients are undefined for a ship that is not moving.
+    pub fn new(
+        ship: &'a power::ShipParticulars,
+        speed: Knots,
+        table: &'a granville::GranvilleTable,
+    ) -> Result<Self, FoulingError> {
+        if !(speed.value().is_finite() && speed.value() > 0.0) {
+            return Err(FoulingError::InvalidParameter("operating speed"));
+        }
+        Ok(OperatingPoint { ship, speed, table })
+    }
     /// Ship particulars.
-    pub ship: &'a power::ShipParticulars,
+    pub fn ship(&self) -> &'a power::ShipParticulars {
+        self.ship
+    }
     /// Speed through water.
-    pub speed: Knots,
+    pub fn speed(&self) -> Knots {
+        self.speed
+    }
     /// Granville lookup table.
-    pub table: &'a granville::GranvilleTable,
+    pub fn table(&self) -> &'a granville::GranvilleTable {
+        self.table
+    }
 }
 
 /// Errors raised by the fouling model.

@@ -43,11 +43,7 @@ fn with_op<R>(f: impl FnOnce(&OperatingPoint) -> R) -> R {
         ShipParticulars::new(Metres(176.0), 0.5).unwrap(),
         GranvilleTable::new(),
     );
-    f(&OperatingPoint {
-        ship: &ship,
-        speed: Knots(14.0),
-        table: &table,
-    })
+    f(&OperatingPoint::new(&ship, Knots(14.0), &table).unwrap())
 }
 
 fn stage1() -> Stage1Model {
@@ -66,7 +62,7 @@ fn stage1_hits_glofouling_trigger_points() {
         simulate(
             &mut stage1(),
             &equatorial_profile(3.0),
-            CleaningPolicy::None,
+            CleaningPolicy::NONE,
             op,
         )
     });
@@ -87,7 +83,7 @@ fn policy_means<M: FoulingModel>(make: impl Fn() -> M) -> [f64; 3] {
         [
             CleaningPolicy::PROACTIVE,
             CleaningPolicy::REACTIVE,
-            CleaningPolicy::None,
+            CleaningPolicy::NONE,
         ]
         .map(|policy| mean_power_factor(&simulate(&mut make(), &timeline, policy, op)))
     })

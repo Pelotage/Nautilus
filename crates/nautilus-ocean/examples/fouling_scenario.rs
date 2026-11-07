@@ -62,13 +62,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         ShipParticulars::new(Metres(176.0), 0.5)?,
         GranvilleTable::new(),
     );
-    let op = OperatingPoint {
-        ship: &ship,
-        speed: Knots(14.0),
-        table: &table,
-    };
+    let op = OperatingPoint::new(&ship, Knots(14.0), &table)?;
     let policies = [
-        ("none", CleaningPolicy::None),
+        ("none", CleaningPolicy::NONE),
         ("reactive", CleaningPolicy::REACTIVE),
         ("proactive", CleaningPolicy::PROACTIVE),
     ];

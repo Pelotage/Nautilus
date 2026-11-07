@@ -152,7 +152,7 @@ fn five_year_mean_hull<M: FoulingModel>(mut model: M, sst: f64) -> f64 {
         simulate(
             &mut model,
             &glofouling_profile(5.0, sst),
-            CleaningPolicy::None,
+            CleaningPolicy::NONE,
             op,
         )
     });

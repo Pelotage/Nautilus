@@ -136,11 +136,7 @@ fn hull_penalty_linear_in_frictional_share() {
         for ks in [50.0, 500.0, 5000.0] {
             let f = |s: &ShipParticulars| {
                 fouling_resistance_fraction(
-                    &OperatingPoint {
-                        ship: s,
-                        speed: Knots(15.0),
-                        table: &table,
-                    },
+                    &OperatingPoint::new(s, Knots(15.0), &table).unwrap(),
                     Micrometres(ks),
                 )
             };

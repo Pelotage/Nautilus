@@ -141,6 +141,8 @@ pub struct Stage2Model {
     ahr: f64,
     prop_rough: f64,
     fresh_stay: f64,
+    /// True between a dry-docking and the next segment with time in it.
+    just_docked: bool,
 }
 
 impl Stage2Model {
@@ -189,6 +191,7 @@ impl Stage2Model {
             ahr: params.ahr_out_docking.value(),
             prop_rough: params.prop_clean.value(),
             fresh_stay: 0.0,
+            just_docked: true,
         })
     }
 
@@ -268,6 +271,7 @@ impl Stage2Model {
         self.calc_wt_sum = 0.0;
         self.prop_rough = self.params.prop_clean.value();
         self.a_prop_calc = 0.0;
+        self.just_docked = true;
     }
 }
 
@@ -275,6 +279,9 @@ impl FoulingModel for Stage2Model {
     fn advance(&mut self, seg: &Segment) {
         let p = self.params;
         let dt = seg.duration().value();
+        if dt > 0.0 {
+            self.just_docked = false;
+        }
         let (t, s) = (seg.sst(), seg.salinity());
         let g = p.gate.gate(seg);
         let soft_s = p.soft_salinity.factor(s);
@@ -319,8 +326,11 @@ impl FoulingModel for Stage2Model {
                 self.ahr = out;
             }
             MaintenanceEvent::DryDockSpotRepair => {
+                // A repeated docking record with no time in between is the same docking.
+                if !self.just_docked {
+                    self.ahr -= self.params.spot_repair_recovery * (self.ahr - out);
+                }
                 self.dry_dock();
-                self.ahr -= self.params.spot_repair_recovery * (self.ahr - out);
             }
             MaintenanceEvent::InWaterHullClean { calcareous_remnant } => {
                 let rho = if calcareous_remnant.is_nan() {
@@ -525,13 +535,9 @@ mod tests {
             GranvilleTable::new(),
         );
         assert!(
-            s.power_penalty(&OperatingPoint {
-                ship: &ship,
-                speed: Knots(14.0),
-                table: &table
-            })
-            .power_factor()
-            .is_finite()
+            s.power_penalty(&OperatingPoint::new(&ship, Knots(14.0), &table).unwrap())
+                .power_factor()
+                .is_finite()
         );
     }
     /// A ship straight out of dry-dock has a power factor of exactly 1 (penalties are measured
@@ -542,11 +548,7 @@ mod tests {
             ShipParticulars::new(Metres(176.0), 0.5).unwrap(),
             GranvilleTable::new(),
         );
-        let op = OperatingPoint {
-            ship: &ship,
-            speed: Knots(14.0),
-            table: &table,
-        };
+        let op = OperatingPoint::new(&ship, Knots(14.0), &table).unwrap();
         assert_eq!(m().power_penalty(&op).power_factor(), 1.0);
         let mut s = m();
         s.advance(&idle(400.0, 25.0, 35.0));
@@ -610,5 +612,17 @@ mod tests {
             f * crate::fouling::uzun::EQ_FAST_ASYM,
         );
         assert!(close(s.calcareous_coverage(), expected, 1e-9 * expected));
+    }
+    /// Stage 2 spot repair: recovers half the paint roughness gained since docking, and a
+    /// duplicated record (no time at sea in between) counts once.
+    #[test]
+    fn spot_repair_partial_and_counts_once() {
+        let mut s = m();
+        s.advance(&idle(2.0 * 365.25, 25.0, 35.0)); // AHR 120 + 2·20 = 160
+        assert!(close(s.ahr().value(), 160.0, 1e-9));
+        s.apply(MaintenanceEvent::DryDockSpotRepair);
+        assert!(close(s.ahr().value(), 140.0, 1e-9));
+        s.apply(MaintenanceEvent::DryDockSpotRepair);
+        assert!(close(s.ahr().value(), 140.0, 1e-9));
     }
 }
