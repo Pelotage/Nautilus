@@ -90,6 +90,17 @@ impl Kilometres {
     }
 }
 
+/// Mass concentration in milligrams per cubic metre (used for chlorophyll-a).
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+pub struct MilligramsPerCubicMetre(pub f64);
+
+impl MilligramsPerCubicMetre {
+    /// Returns the underlying value in mg/m³.
+    pub fn value(self) -> f64 {
+        self.0
+    }
+}
+
 /// Length in micrometres (1e-6 m).
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 pub struct Micrometres(pub f64);
@@ -117,5 +128,10 @@ mod tests {
         assert!((Days(365.25).years() - 1.0).abs() < 1e-12);
         assert!((Micrometres(150.0).to_metres() - 1.5e-4).abs() < 1e-15);
         assert_eq!(Celsius(25.0).value(), 25.0);
+    }
+    /// Chlorophyll-a concentration unit holds its value (mg/m³).
+    #[test]
+    fn chlorophyll_unit() {
+        assert_eq!(MilligramsPerCubicMetre(2.5).value(), 2.5);
     }
 }

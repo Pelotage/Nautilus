@@ -1,7 +1,7 @@
 //! Segment forcing and the environmental response functions that set how fast
 //! the exposure clocks run.
 
-use nautilus_units::{Celsius, Days, Kilometres, Knots, Psu};
+use nautilus_units::{Celsius, Days, Kilometres, Knots, MilligramsPerCubicMetre, Psu};
 
 use super::FoulingError;
 
@@ -25,6 +25,7 @@ pub struct Segment {
     salinity: Psu,
     port: PortStatus,
     distance_to_coast: Kilometres,
+    chlorophyll: Option<MilligramsPerCubicMetre>,
 }
 
 impl Segment {
@@ -71,6 +72,7 @@ impl Segment {
             salinity,
             port,
             distance_to_coast,
+            chlorophyll: None,
         })
     }
 
@@ -97,6 +99,24 @@ impl Segment {
     /// Distance to the nearest coast.
     pub fn distance_to_coast(&self) -> Kilometres {
         self.distance_to_coast
+    }
+
+    /// Returns this segment with a chlorophyll-a concentration (food supply). Rejects
+    /// negative or non-finite values with [`FoulingError::InvalidSegment`].
+    pub fn with_chlorophyll(
+        mut self,
+        chl: MilligramsPerCubicMetre,
+    ) -> Result<Segment, FoulingError> {
+        if !(chl.value().is_finite() && chl.value() >= 0.0) {
+            return Err(FoulingError::InvalidSegment("chlorophyll"));
+        }
+        self.chlorophyll = Some(chl);
+        Ok(self)
+    }
+
+    /// Chlorophyll-a concentration, if known. Models treat `None` as "no food effect".
+    pub fn chlorophyll(&self) -> Option<MilligramsPerCubicMetre> {
+        self.chlorophyll
     }
 }
 
@@ -468,5 +488,33 @@ mod tests {
         let t = TemperatureResponse::default();
         assert_eq!(t.factor(Celsius(11.999)), 0.1);
         assert!(close(t.factor(Celsius(12.0)), 2f64.powf(-1.3), 1e-12));
+    }
+    /// Chlorophyll is optional: absent unless added, kept exactly when added, and rejected
+    /// when negative or non-finite (a food-supply input must be a real concentration).
+    #[test]
+    fn chlorophyll_is_optional_and_validated() {
+        use nautilus_units::MilligramsPerCubicMetre as Chl;
+        let base = Segment::new(
+            Days(1.0),
+            Knots(5.0),
+            Celsius(20.0),
+            Psu(35.0),
+            PortStatus::AtSea,
+            Kilometres(30.0),
+        )
+        .unwrap();
+        assert_eq!(base.chlorophyll(), None);
+        let with = base.with_chlorophyll(Chl(0.8)).unwrap();
+        assert_eq!(with.chlorophyll(), Some(Chl(0.8)));
+        assert_eq!(
+            (with.duration(), with.sst(), with.salinity()),
+            (base.duration(), base.sst(), base.salinity())
+        );
+        for bad in [-0.1, f64::NAN, f64::INFINITY] {
+            assert_eq!(
+                base.with_chlorophyll(Chl(bad)),
+                Err(FoulingError::InvalidSegment("chlorophyll"))
+            );
+        }
     }
 }
