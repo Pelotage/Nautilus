@@ -70,6 +70,7 @@ models are named for how they work, not by "stage".
 | — | `dynamics.rs` | the right-hand side dX/dt of the guild model |
 | — | `integrate.rs` | the fixed-step solver (Section 5.5) |
 | — | `guild_model.rs` | `GuildModel`: state, `FoulingModel` implementation, events, observation |
+| `calibration.rs` | the three layers' scoring functions and the Nelder–Mead optimizer, shared by the calibration example and the validation tests |
 
 Unchanged: `environment.rs`, `events.rs`, `granville.rs`, `power.rs`, `simulate.rs`, `uzun.rs`.
 
@@ -162,7 +163,7 @@ Both are unchanged from today.
 ```
 dF_i,g/dt = σ_i(S)·φ(chl)·[ x·s_i,g(T)·b_g(T)·(1 − F_i/K_i)        settlement into free capacity
                           + γ·r_i,g(T)·F_i,g·√ln(K_i/F_i) ]        growth (Uzun's curve family)
-            − [ μ_g(T) + μ_fresh,i(S) + δ_i(v) ]·F_i,g              thermal, freshwater, detachment
+            − [ μ_g(T) + μ_fresh,i(S) + μ_brack,i(S) + δ_i(v) ]·F_i,g   thermal, fresh/brackish, detachment
 ```
 
 The growth term is defined as 0 at F_i = 0 (its limit). Then F_i,g√ln(K_i/F_i) → 0.
@@ -171,7 +172,7 @@ The growth term is defined as 0 at F_i = 0 (its limit). Then F_i,g√ln(K_i/F_i)
 
 ```
 Φ        = max(0, K_h(T) − C_w − C_c − D)                         free space now
-dC_g/dt  = σ_h(S)·φ(chl)·[ x·s_c,g(T)·b_g(T)·Φ/100 + γ·r_c,g(T)·C_g·Φ/100 ]
+dC_g/dt  = σ_h(S)·φ(chl)·[ x·s_c,g(T)·b_g(T)·Φ/K_h + γ·r_c,g(T)·C_g·Φ/K_h ]
            − [ μ_g(T) + μ_fresh,h(S) ]·C_g
 dD/dt    = Σ_g [ μ_g(T) + μ_fresh,h(S) ]·C_g − ω·D                shells persist, weather slowly
 ```
@@ -197,7 +198,8 @@ parameters.
 | Settlement s_i,g(T) | s_ref·Qs^((T − 25)/10) for T ≤ T_opt,g; linear to 0 at T_max,g; 0 above |
 | Breeding b_g(T) | 1 on [B_lo,g, B_hi,g]; linear to 0 over 1 °C outside; 0 beyond |
 | Mortality μ_g(T) | 0 on [L_lo,g, L_hi,g]; μ_max·min(1, distance outside / 3 °C) |
-| Freshwater μ_fresh,i(S) | μ_f,i for S < 2 PSU, else 0. Soft and slime: μ_f = ln 2 / 0.125 d (half after 3 h, >99.6% after 24 h). Live barnacles: ln 2 / 3 d |
+| Freshwater μ_fresh,i(S) | μ_f,i for S < 2 PSU, else 0. Soft and slime: μ_f = ln 2 / 0.125 d (half after 3 h, 1/16 left after 12 h, >99.6% killed after 24 h). Live barnacles: ln 2 / 3 d |
+| Brackish μ_brack,i(S) | slime and soft only: μ_max for S below the stenohaline zero (10 PSU), else 0. Marine soft fouling cannot survive a long brackish stay |
 | Food φ(chl) | 1 + α·chl/(chl + K_chl); 1 when chlorophyll is absent |
 | Detachment δ_i(v) | d_i·max(0, v − v_d,i) |
 | Salinity σ_i(S) | unchanged: stenohaline for slime and soft, euryhaline for calcareous |
@@ -343,7 +345,7 @@ from.
   | Singapore → Rotterdam (winter, 8 °C) | warm guild live amount falls > 90% within 45 days; dead coverage keeps hull k_s within 10% of its arrival value; the cold guild starts settling |
   | Rotterdam → Persian Gulf (33 °C) | cold guild dies off; warm guild settles |
   | Baltic stay (6 PSU, 60 days) | soft fouling → near 0; live calcareous survives (euryhaline) |
-  | Panama transit (0.3 PSU, 12 h) | soft rating halves (± 2%) |
+  | Panama transit (0.3 PSU, 12 h) | soft rating falls to 1/16 of its value (± 2% relative), from the 3 h half-life |
   | Southern-hemisphere seasonal route (Cape Town–Durban SST cycle) | settlement switches on and off with temperature, with no calendar input |
   | Same route with and without chlorophyll | α = 0 output identical to no-chlorophyll output; α > 0 never gives less fouling |
   | Fast liner, detachment enabled | soft fouling falls while sailing above v_d; unchanged with d = 0 |
