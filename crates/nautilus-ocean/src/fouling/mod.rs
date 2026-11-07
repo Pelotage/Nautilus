@@ -21,6 +21,7 @@ pub mod events;
 pub mod granville;
 pub mod power;
 pub mod stage1;
+pub mod uzun;
 
 /// A fouling model: continuous growth along segments, jumps at events, and an
 /// observation that turns the state into a power penalty.
