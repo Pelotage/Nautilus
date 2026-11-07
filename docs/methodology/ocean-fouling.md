@@ -90,6 +90,107 @@ published curve exactly at 25 °C, full salinity, idle.
 
 FR 0.75 corresponds to k_s ≈ 40 µm, GloFouling's post-cleaning floor.
 
+## Guild model (`guild_model.rs`, `rates.rs`, `dynamics.rs`, `integrate.rs`)
+
+The exposure and age-clock models make every growth rate depend on the environment only.
+Each site's curve is then a time-stretched equatorial curve, nothing dies except in fresh
+water, and the barnacle plateau needs a running mean temperature. The guild model is
+built for ships that move between climates. Its state is the fouling actually present,
+and the rates depend on that state.
+
+**State** (hull, plus its own calcareous state on the propeller), with g ∈ {warm, cold}:
+
+- slime ratings F_sl,g (sum ≤ 20);
+- soft ratings F_so,g (sum ≤ 50);
+- live calcareous coverage C_g, plus dead shells D (live + dead ≤ 100 %);
+- paint roughness R and propeller roughness k_p.
+
+A fresh hull has no fouling, so its power factor is exactly 1.
+
+**Equations.** Here x = settlement·supply gate and γ = growth gate, as for the other models:
+
+```
+dF_i,g/dt = σ_i(S)·φ(chl)·[ x·s_i,g(T)·b_g(T)·(1 − F_i/K_i) + γ·r_i,g(T)·F_i,g·√ln(K_i/F_i) ]
+            − [ μ_g(T) + μ_fresh,i(S) + μ_brack,i(S) + δ_i(v) ]·F_i,g          (slime, soft)
+Φ         = max(0, K_h(T) − C_w − C_c − D)
+dC_g/dt   = σ_h(S)·φ(chl)·[ x·s_c,g(T)·b_g(T) + γ·r_c,g(T)·C_g ]·Φ/K_h − [ μ_g(T) + μ_fresh,h(S) ]·C_g
+dD/dt     = Σ_g [ μ_g + μ_fresh,h ]·C_g − ω·D
+```
+
+| Rate | Form |
+|---|---|
+| Settlement s, growth r | Q10 rise to the guild optimum T_opt, linear fall to 0 at T_max |
+| Breeding b_g | 1 inside the guild's breeding range, 1 °C ramps at the edges |
+| Thermal death μ_g | 0 inside the lethal window, rising to 0.1/day within 3 °C outside it |
+| Freshwater death μ_fresh | soft and slime: ln 2 per 3 h below 2 PSU; live barnacles: ln 2 per 3 days |
+| Brackish death μ_brack | slime and soft: 0.1/day below 10 PSU |
+| Food φ | 1 + α·chl/(chl + K); α = 0 by default |
+| Detachment δ | d·max(0, v − v_d); d = 0 for self-polishing paint |
+| Capacity K_h(T) | line through (17 °C, 49.9 %) and (25 °C, 96.8 %), clamped to [10, 100] % |
+
+Guild windows (priors):
+
+| Guild | Optimum / zero | Lethal window | Breeding range |
+|---|---|---|---|
+| Warm | 29 / 35 °C | 10–35 °C | ≥ 15 °C |
+| Cold | 13 / 24 °C | −2–24 °C | ≤ 12 °C |
+
+The cold guild uses the warm guild's fitted peak rates around its own optimum. That is an
+assumption: two panel sites cannot identify both guilds.
+
+**Observation:**
+
+- k_s = 30 µm + λ·(k_s,Uzun − 30 µm), where k_s,Uzun is the larger of Uzun Eq. 17 (total
+  rating) and Eq. 18 (live + dead coverage), and λ is the Layer 2 roughness scale;
+- the propeller uses the larger of its drift roughness and its scaled blade-shell roughness;
+- the power chain is shared with the other models.
+
+**Events:**
+
+- **Dry-dock:** resets everything. A duplicate record counts once.
+- **In-water clean:** treats a share η of the hull. On that share, slime goes to the 0.75 floor,
+  soft fouling and live barnacles are removed, a fraction ρ of the shells stays as base plates,
+  and the paint gains 10 µm per 100 % coverage removed. The rest of the hull is untouched.
+  Cleaning twice with no time in between is a no-op.
+- **Grooming:** removes slime (to the floor), soft fouling and live barnacles; dead shells stay.
+- **Propeller polish:** resets the blades.
+
+**Solver.** Fixed-step integrating-factor RK4, with steps of at most 0.25 day. The linear
+losses, including the transfer of dead barnacles into D, are solved exactly. The scheme is
+fourth order and deterministic. After each segment, class totals are projected onto their hard
+limits, so RK4 overshoot near saturation cannot leave a rating above its maximum.
+
+### Calibration (layered, `examples/calibrate_fouling.rs`)
+
+| Layer | Data | Fitted | Result |
+|---|---|---|---|
+| 1 Growth | Uzun 2019, 25 °C and 17 °C panels, 1,500 days | settlement and growth rates and their Q10s per class; capacities | worst gaps: slime 0.08, soft 0.005 rating points; coverage 0.07 percentage points (limits 1 / 2 / 3) |
+| 2 Roughness → power | GloFouling 5-year penalties (+30 % equatorial, +22 % Mediterranean) | roughness scale λ = 0.519 | 0.330 and 0.172 (limits ± 0.05) |
+| 3 Events | Adland dry-dock / in-water recovery ratio of about 2 | cleaning efficiency η = 0.630 | 2.000 (limits 1.6–2.4) |
+
+Decisions taken during calibration, all with the user:
+
+- **Layer 1:** equatorial coverage is scored against Uzun's main logistic only. The 3.5 % fast
+  term is unconfirmed (research spec open item 1) and stays below the 5 % threshold of Eq. 18.
+- **Layer 2:** fits one roughness scale λ instead of the planned coverage slope. The gap comes
+  from Uzun's rating mapping (a rating of 70 maps to 1 mm), not from coverage above 50 %.
+- **Layer 3:** fits a cleaning efficiency η. Realistic paint damage alone gives a ratio of only
+  about 1.1.
+
+**Caveats:**
+
+- The fitted *settlement* Q10s are fit artefacts (calcareous ≈ 3.6e9, soft ≈ 0.012). Settlement
+  only times when each curve takes off; growth Q10s are plausible.
+- Shell weathering (0.001/day) is a prior: it cannot be identified from the panel sites.
+- A partial clean averages coverage before the roughness mapping, which overstates the penalty
+  just after the clean. Hundley's thorough naval clean is therefore checked with η = 1.
+
+### Which model to use
+
+- **Exposure model:** quick estimates and GloFouling-style trigger points.
+- **Age-clock model:** the published Uzun baseline at a fixed climate.
+- **Guild model:** routes that cross climates or pass through fresh or brackish water.
+
 ## Roughness → resistance (`granville.rs`, `power.rs`)
 
 - Granville similarity law with the **Nikuradse-type** roughness function, κ = 0.42, against the
