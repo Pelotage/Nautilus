@@ -1,0 +1,12 @@
+[package]
+name = "nautilus-units"
+description = "Type-safe physical quantities. Nothing else may define a physical quantity."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]

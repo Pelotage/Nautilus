@@ -1,2 +1,7 @@
+# Build output
+/target/
+
 # Directories
 plans/*
+research/
+scripts/

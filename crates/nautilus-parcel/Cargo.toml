@@ -1,0 +1,18 @@
+[package]
+name = "nautilus-parcel"
+description = "Parcel pipeline: multi-stop last-mile routes, parcel/stop allocation, sorting-hub HOC."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+nautilus-units.workspace = true
+nautilus-model.workspace = true
+nautilus-trace.workspace = true
+nautilus-factors.workspace = true
+nautilus-geo.workspace = true
+nautilus-core.workspace = true

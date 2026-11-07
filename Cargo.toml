@@ -1,0 +1,52 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/nautilus-units",
+    "crates/nautilus-model",
+    "crates/nautilus-trace",
+    "crates/nautilus-factors",
+    "crates/nautilus-geo",
+    "crates/nautilus-core",
+    "crates/nautilus-ocean",
+    "crates/nautilus-air",
+    "crates/nautilus-road",
+    "crates/nautilus-parcel",
+    "crates/nautilus-spend",
+    "crates/nautilus-chain",
+    "crates/nautilus-uncertainty",
+    "crates/nautilus-io",
+    "crates/nautilus-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.dependencies]
+# Internal crates. The graph they imply is the architecture: see plans/0001.
+nautilus-units = { path = "crates/nautilus-units" }
+nautilus-model = { path = "crates/nautilus-model" }
+nautilus-trace = { path = "crates/nautilus-trace" }
+nautilus-factors = { path = "crates/nautilus-factors" }
+nautilus-geo = { path = "crates/nautilus-geo" }
+nautilus-core = { path = "crates/nautilus-core" }
+nautilus-ocean = { path = "crates/nautilus-ocean" }
+nautilus-air = { path = "crates/nautilus-air" }
+nautilus-road = { path = "crates/nautilus-road" }
+nautilus-parcel = { path = "crates/nautilus-parcel" }
+nautilus-spend = { path = "crates/nautilus-spend" }
+nautilus-chain = { path = "crates/nautilus-chain" }
+nautilus-uncertainty = { path = "crates/nautilus-uncertainty" }
+nautilus-io = { path = "crates/nautilus-io" }
+
+[profile.release]
+# Determinism over speed: no surprises from aggressive codegen.
+codegen-units = 1
+lto = false
+panic = "abort"
+overflow-checks = true

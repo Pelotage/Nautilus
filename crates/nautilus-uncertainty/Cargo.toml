@@ -1,0 +1,16 @@
+[package]
+name = "nautilus-uncertainty"
+description = "Deterministic Monte Carlo, interval propagation, pedigree-matrix scoring."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+nautilus-units.workspace = true
+nautilus-trace.workspace = true
+nautilus-core.workspace = true
+nautilus-chain.workspace = true

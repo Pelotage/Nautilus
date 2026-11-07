@@ -1,0 +1,21 @@
+[package]
+name = "nautilus-chain"
+description = "Multi-leg orchestration. The ONLY crate aware of more than one mode."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+nautilus-units.workspace = true
+nautilus-model.workspace = true
+nautilus-trace.workspace = true
+nautilus-core.workspace = true
+nautilus-ocean.workspace = true
+nautilus-air.workspace = true
+nautilus-road.workspace = true
+nautilus-parcel.workspace = true
+nautilus-spend.workspace = true

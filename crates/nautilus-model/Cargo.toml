@@ -1,0 +1,13 @@
+[package]
+name = "nautilus-model"
+description = "Domain types and validation (Shipment, TransportChain, Leg, Hub...). No math, no I/O."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+nautilus-units.workspace = true

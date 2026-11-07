@@ -1,0 +1,17 @@
+[package]
+name = "nautilus-core"
+description = "The ISO 14083 engine and the ModePipeline trait. Pure: no I/O, network or clock."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+nautilus-units.workspace = true
+nautilus-model.workspace = true
+nautilus-trace.workspace = true
+nautilus-factors.workspace = true
+nautilus-geo.workspace = true

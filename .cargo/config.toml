@@ -1,0 +1,5 @@
+# Floating-point policy (plan 0001, "Determinism is engineered").
+# Rust has no fast-math and does not contract a*b+c into FMA by default.
+# Pinning a generic CPU target keeps results identical across machines.
+[build]
+rustflags = ["-C", "target-cpu=generic"]

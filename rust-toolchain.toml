@@ -1,0 +1,5 @@
+# Exact pin for reproducible builds (plan 0001). Bump deliberately, never implicitly.
+[toolchain]
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

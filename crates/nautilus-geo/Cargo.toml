@@ -1,0 +1,15 @@
+[package]
+name = "nautilus-geo"
+description = "Mode-agnostic geometry only (great-circle, coordinates, graph helpers)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+nautilus-units.workspace = true
+nautilus-model.workspace = true
+nautilus-trace.workspace = true
