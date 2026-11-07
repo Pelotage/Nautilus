@@ -20,6 +20,7 @@ pub mod environment;
 pub mod events;
 pub mod granville;
 pub mod power;
+pub mod simulate;
 pub mod stage1;
 pub mod stage2;
 pub mod uzun;
