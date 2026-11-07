@@ -282,4 +282,16 @@ mod tests {
             / 200.0;
         assert!((mean_power_factor(&traj) - expected).abs() < 1e-12);
     }
+    /// Boundary of the cleaning interval: a clean is due when *exactly* `interval` days
+    /// have passed (≥, not >). Clean at day 200, then 182.5 days of sailing → due at 382.5.
+    #[test]
+    fn interval_boundary_is_inclusive() {
+        let traj = run(&[berth(200.0), sail(182.5)], CleaningPolicy::PROACTIVE);
+        let cleans: Vec<f64> = traj
+            .iter()
+            .filter(|p| matches!(p.event, Some(MaintenanceEvent::InWaterHullClean { .. })))
+            .map(|p| p.elapsed.value())
+            .collect();
+        assert_eq!(cleans, vec![200.0, 382.5]);
+    }
 }

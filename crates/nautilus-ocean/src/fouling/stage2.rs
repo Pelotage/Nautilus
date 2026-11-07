@@ -590,4 +590,25 @@ mod tests {
             Err(FoulingError::InvalidParameter(_))
         ));
     }
+    /// The coverage plateau depends on the exposure-weighted mean SST, with each segment's
+    /// temperature capped at 32 °C. A hot leg (100 d at 34 °C) and a cold leg (300 d at
+    /// 12 °C) give a mean of ~23.6 °C, so the plateau is interpolated between the cold and
+    /// warm sites. Expected coverage worked out in the test from the Q10 law and Uzun's curve.
+    #[test]
+    fn mean_sst_for_coverage_caps_hot_water_at_32c() {
+        let mut s = m();
+        s.advance(&idle(100.0, 34.0, 35.0));
+        s.advance(&idle(300.0, 12.0, 35.0));
+        let q = |t: f64| 2.0417_f64.powf((t - 25.0) / 10.0);
+        let (w_hot, w_cold) = (100.0 * q(32.0), 300.0 * q(12.0));
+        let mean_t = (w_hot * 32.0 + w_cold * 12.0) / (w_hot + w_cold);
+        assert!(mean_t > 17.0 && mean_t < 25.0);
+        let f = (mean_t - 17.0) / 8.0;
+        let expected = crate::fouling::uzun::EQ_CALCAREOUS.coverage(
+            w_hot + w_cold,
+            50.0 + f * (crate::fouling::uzun::EQ_MAIN_ASYM - 50.0),
+            f * crate::fouling::uzun::EQ_FAST_ASYM,
+        );
+        assert!(close(s.calcareous_coverage(), expected, 1e-9 * expected));
+    }
 }
