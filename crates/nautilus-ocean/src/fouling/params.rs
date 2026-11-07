@@ -284,7 +284,12 @@ pub struct GuildParams {
     /// Thermal windows, indexed by [`WARM`] and [`COLD`].
     pub guilds: [GuildWindow; 2],
     /// Class rates, indexed by [`SLIME`], [`SOFT`], [`CALCAREOUS`] (warm-guild reference;
-    /// the cold guild uses the same values at its own reference temperature).
+    /// the cold guild uses the same values at its own reference temperature). Fitted
+    /// (Layer 1). Growth rates and their Q10s are physically plausible; the *settlement*
+    /// Q10s are not (calcareous ≈ 3.6e9, soft ≈ 0.012). Settlement only sets when each curve
+    /// takes off, and Uzun's Mediterranean barnacle curve starts from an almost-zero seed.
+    /// In practice barnacles barely settle below about 22 °C, and settlement is capped at the
+    /// guild optimum (29 °C).
     pub classes: [ClassRates; 3],
     /// Maximum thermal and brackish mortality, per day (0.1: a stranded community largely
     /// dies within a month). Assumption — calibrate.
@@ -308,13 +313,15 @@ pub struct GuildParams {
     /// Detachment of slime and soft fouling, indexed by [`SLIME`] and [`SOFT`] (rate 0 for
     /// self-polishing paint; thresholds 30 kn and 10 kn from foul-release release speeds).
     pub detachment: [Detachment; 2],
-    /// Calcareous capacity at 17 °C, % coverage. Fitted (Layer 1).
+    /// Calcareous capacity at 17 °C, % coverage. Fitted (Layer 1): 49.9 (Uzun plateau 50).
     pub capacity_17: f64,
-    /// Calcareous capacity at 25 °C, % coverage. Fitted (Layer 1).
+    /// Calcareous capacity at 25 °C, % coverage. Fitted (Layer 1): 96.8 (Uzun main term 96.9).
     pub capacity_25: f64,
     /// Floor of the calcareous capacity line, % coverage (10). Assumption — calibrate.
     pub capacity_min: f64,
-    /// Weathering of dead shells, per day. Fitted (Layer 1).
+    /// Weathering of dead shells, per day (0.001: half-life about 2 years). Neither Uzun site
+    /// has any die-off, so Layer 1 cannot identify it (a free fit ran to 200/day).
+    /// Assumption — calibrate.
     pub weathering_per_day: f64,
     /// Slope of the coverage-to-roughness mapping above 50 % coverage, µm per % (Uzun
     /// Eq. 18 gives 80). Fitted (Layer 2).
@@ -365,11 +372,28 @@ impl Default for GuildParams {
                 window(25.0, 29.0, 35.0, 10.0, 35.0, 15.0, 35.0),
                 window(9.0, 13.0, 24.0, -2.0, 24.0, -2.0, 12.0),
             ],
-            // Provisional starting values; replaced by the Layer 1 fit.
+            // Layer 1 fit: examples/calibrate_fouling.rs layer1, 2026-11-07. Worst gaps to Uzun
+            // 2019 at 25 °C / 17 °C: slime 0.081 / 0.065, soft 0.005 / 0.005 rating points,
+            // coverage 0.074 / 0.074 percentage points (limits 1, 2, 3).
             classes: [
-                rates(0.01, 2.0 / 37.08, 2.0, 4.16),
-                rates(0.001, 2.0 / 73.11, 2.0, 1.54),
-                rates(0.01, 0.0407, 2.0, 2.04),
+                rates(
+                    1.0025880039562401e-2,
+                    5.252675505260153e-2,
+                    3.966155775502118e1,
+                    3.3036727918417013e0,
+                ),
+                rates(
+                    4.926792468332563e-6,
+                    2.7350951847529014e-2,
+                    1.2200085392013421e-2,
+                    1.944356796762606e0,
+                ),
+                rates(
+                    4.4801957879398244e-7,
+                    4.067578624297247e-2,
+                    3.550678779933242e9,
+                    8.229349560531856e-1,
+                ),
             ],
             mortality_max: 0.1,
             mortality_ramp: Celsius(3.0),
@@ -389,8 +413,8 @@ impl Default for GuildParams {
                     threshold: Knots(10.0),
                 },
             ],
-            capacity_17: 50.0,
-            capacity_25: 100.0,
+            capacity_17: 4.9930829219449535e1,
+            capacity_25: 9.682533388237766e1,
             capacity_min: 10.0,
             weathering_per_day: 0.001,
             high_coverage_slope: 80.0,

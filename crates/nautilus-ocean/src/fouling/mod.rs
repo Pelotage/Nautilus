@@ -54,6 +54,7 @@ use std::fmt;
 use nautilus_units::Knots;
 
 pub mod age_clock_model;
+pub mod calibration;
 pub(crate) mod dynamics;
 pub mod environment;
 pub mod events;

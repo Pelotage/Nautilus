@@ -15,7 +15,9 @@ mod common;
 
 use common::*;
 use nautilus_ocean::fouling::FoulingModel;
+use nautilus_ocean::fouling::calibration::layer1_gaps;
 use nautilus_ocean::fouling::events::MaintenanceEvent;
+use nautilus_ocean::fouling::params::GuildParams;
 use nautilus_ocean::fouling::simulate::{CleaningPolicy, TimelineItem, simulate};
 use nautilus_ocean::fouling::uzun::{GaussianRating, hull_ks};
 
@@ -125,25 +127,25 @@ fn med_site_shape_gap_does_not_grow() {
     }
 }
 
-/// Goal: the model tracks Uzun's Mediterranean curves to within 1 rating point (slime),
-/// 2 points (soft) and 3 percentage points (coverage). Needs class-specific shape
-/// parameters that vary with temperature, not only a Q10 time scaling.
+/// Layer 1 (growth) of the guild model: at both Uzun panel sites (25 °C equatorial and
+/// 17 °C Mediterranean, idle at berth in sea water, 1,500 days) the worst gap to Uzun's
+/// published curves is at most 1 rating point for slime, 2 for soft fouling and 3 percentage
+/// points for calcareous coverage. Oracle: Uzun et al. 2019 Tables 2–3. This replaces the
+/// age-clock model's calibration target, which could match timing but not shape.
 #[test]
-#[ignore = "calibration target: age-clock model reproduces Mediterranean timing but not curve widths"]
-fn med_site_shape_calibration_target() {
-    let s = med_comparison(1500);
-    let worst = |k: usize| {
-        s.iter()
-            .map(|(m, u)| (m[k] - u[k]).abs())
-            .fold(0.0, f64::max)
-    };
-    assert!(
-        worst(0) <= 1.0 && worst(1) <= 2.0 && worst(2) <= 3.0,
-        "slime {} soft {} cov {}",
-        worst(0),
-        worst(1),
-        worst(2)
-    );
+fn guild_layer1_growth_matches_uzun_both_sites() {
+    for (site, g) in ["equatorial", "mediterranean"]
+        .iter()
+        .zip(layer1_gaps(&GuildParams::default()))
+    {
+        assert!(
+            g.slime <= 1.0 && g.soft <= 2.0 && g.coverage <= 3.0,
+            "{site}: slime {:.3} soft {:.3} coverage {:.3}",
+            g.slime,
+            g.soft,
+            g.coverage
+        );
+    }
 }
 
 /// Mean hull fouling penalty over 5 years without cleaning on the GloFouling profile.
