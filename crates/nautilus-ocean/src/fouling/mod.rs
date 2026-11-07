@@ -45,6 +45,7 @@ use std::fmt;
 use nautilus_units::Knots;
 
 pub mod age_clock_model;
+pub(crate) mod dynamics;
 pub mod environment;
 pub mod events;
 pub mod exposure_model;
