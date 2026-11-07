@@ -671,4 +671,31 @@ mod tests {
             assert!(s.calcareous_coverage() <= 100.0);
         }
     }
+    /// A second clean after regrowth keeps the base plates the first clean left (they are not
+    /// scraped again) and leaves a fraction ρ of only the *new* growth: dead = old plates
+    /// + ρ × live regrowth.
+    #[test]
+    fn later_clean_keeps_earlier_base_plates() {
+        let p = GuildParams {
+            clean_efficiency: 1.0,
+            ..GuildParams::default()
+        };
+        let mut s = GuildModel::new(p).unwrap();
+        s.advance(&idle(500.0, 28.0));
+        s.apply(MaintenanceEvent::InWaterHullClean {
+            calcareous_remnant: 0.2,
+        });
+        s.advance(&idle(60.0, 28.0));
+        let (dead, live) = (s.dead_coverage(), s.live_coverage());
+        assert!(dead > 0.0 && live > 0.0);
+        s.apply(MaintenanceEvent::InWaterHullClean {
+            calcareous_remnant: 0.2,
+        });
+        assert!(
+            (s.dead_coverage() - (dead + 0.2 * live)).abs() < 1e-9,
+            "{} vs {}",
+            s.dead_coverage(),
+            dead + 0.2 * live
+        );
+    }
 }
