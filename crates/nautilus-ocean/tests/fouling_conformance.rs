@@ -69,8 +69,7 @@ fn stage1_hits_glofouling_trigger_points() {
     });
     let at = |d: f64| {
         traj.iter()
-            .filter(|p| p.elapsed.value() <= d)
-            .last()
+            .rfind(|p| p.elapsed.value() <= d)
             .unwrap()
             .penalty
             .hull_fouling_fraction

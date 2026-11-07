@@ -73,16 +73,15 @@ pub fn simulate<M: FoulingModel>(
     let mut points = Vec::with_capacity(timeline.len());
     let mut elapsed = 0.0;
     let mut last_clean: Option<f64> = None;
-    let mut event_point =
-        |model: &mut M, points: &mut Vec<TrajectoryPoint>, elapsed: f64, event| {
-            model.apply(event);
-            points.push(TrajectoryPoint {
-                elapsed: Days(elapsed),
-                segment_duration: Days(0.0),
-                penalty: model.power_penalty(op),
-                event: Some(event),
-            });
-        };
+    let event_point = |model: &mut M, points: &mut Vec<TrajectoryPoint>, elapsed: f64, event| {
+        model.apply(event);
+        points.push(TrajectoryPoint {
+            elapsed: Days(elapsed),
+            segment_duration: Days(0.0),
+            penalty: model.power_penalty(op),
+            event: Some(event),
+        });
+    };
     for item in timeline {
         match *item {
             TimelineItem::Event(event) => {
