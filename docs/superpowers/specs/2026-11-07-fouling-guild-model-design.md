@@ -247,15 +247,16 @@ Properties:
 Each segment is cut into n = ⌈Δ/h_max⌉ equal steps, h = Δ/n, h_max = 0.25 day. A zero-length
 segment is a no-op. The environment, and so every rate, is constant within a segment.
 
-Each step is Strang-split:
-1. A half-step of exact exponential decay for the linear loss terms. Each population is
-   multiplied by exp(−λ·h/2), with λ = μ + μ_fresh + δ; mass lost by live calcareous fouling is
-   added to D exactly, and D decays by exp(−ω·h/2).
-2. One classical RK4 step for the gain terms (settlement and growth).
-3. A second half-step of decay.
+Each step uses integrating-factor (Lawson) RK4. The linear losses, including the transfer of
+dead live-shell mass into D, are solved exactly by their closed-form flow, and classical RK4
+handles the gain terms (settlement and growth) in that frame. The scheme is fourth order and
+exact when there are no gains, so a 3 h freshwater half-life is exact even with quarter-day
+steps. After each step, negative round-off is clamped to 0. The clamp never hides a NaN, and a
+test checks it is never needed by more than 1e-12.
 
-Then the states are clamped to their ranges. Clamping only absorbs float round-off, and a test
-checks it is never needed by more than 1e-12.
+(An earlier draft used a Strang split: half-step decay, RK4, half-step decay. That is only
+second order whenever gains and losses interact, which contradicts the fourth-order test in
+Section 8.)
 
 Paint and propeller drift are integrated exactly, as now. Results are deterministic: fixed
 step count and no tolerance loops. Splitting a segment reproduces the unsplit result to

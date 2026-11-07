@@ -49,6 +49,7 @@ pub mod environment;
 pub mod events;
 pub mod exposure_model;
 pub mod granville;
+pub(crate) mod integrate;
 pub mod params;
 pub mod power;
 pub mod rates;
