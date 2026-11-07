@@ -51,6 +51,7 @@ pub mod exposure_model;
 pub mod granville;
 pub mod params;
 pub mod power;
+pub mod rates;
 pub mod simulate;
 pub mod uzun;
 
