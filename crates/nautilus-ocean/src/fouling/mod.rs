@@ -15,6 +15,7 @@
 use std::fmt;
 
 pub mod environment;
+pub mod granville;
 
 /// Errors raised by the fouling model.
 #[derive(Debug, Clone, PartialEq, Eq)]
