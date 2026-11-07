@@ -724,4 +724,17 @@ mod tests {
             assert!(Stage2Model::new(p).is_err(), "cold {cold} warm {warm}");
         }
     }
+    /// Docking twice in a row (full blast) gives the same state as docking once, and a
+    /// docked hull has the as-applied paint and propeller roughness. (Review focus 3.)
+    #[test]
+    fn double_full_blast_is_idempotent() {
+        let mut s = m();
+        s.advance(&idle(700.0, 28.0, 35.0));
+        s.apply(MaintenanceEvent::DryDockFullBlast);
+        let once = s.clone();
+        s.apply(MaintenanceEvent::DryDockFullBlast);
+        assert_eq!(s, once);
+        assert_eq!((s.ahr().value(), s.prop_ks().value()), (120.0, 30.0));
+        assert_eq!(s.calcareous_coverage(), m().calcareous_coverage());
+    }
 }

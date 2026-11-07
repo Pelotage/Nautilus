@@ -266,4 +266,19 @@ mod tests {
             0.002
         ));
     }
+    /// ITTC-78 allowance to full precision, so a change to any constant in the formula is
+    /// caught (the prototype vectors above only carry 3 decimals). Expected values: the
+    /// formula evaluated independently in Python for the 176 m / 14 kn tanker.
+    #[test]
+    fn ittc_allowance_full_precision() {
+        let r = re(176.0, 14.0);
+        for (ks, want) in [
+            (150e-6, 0.000_111_336_527_753_398_88),
+            (30e-6, -6.187_063_228_939_237e-5),
+            (1000e-6, 0.000_479_309_797_299_891_3),
+        ] {
+            let got = ittc_roughness_allowance(ks / 176.0, r);
+            assert!((got - want).abs() < 1e-15, "ks={ks}: {got} vs {want}");
+        }
+    }
 }

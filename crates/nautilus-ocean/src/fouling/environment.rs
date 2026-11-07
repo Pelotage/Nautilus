@@ -107,7 +107,8 @@ pub struct TemperatureResponse {
     pub q10: f64,
     /// Reference temperature where the factor is 1 (25 °C, Uzun equatorial site).
     pub t_ref: Celsius,
-    /// Below this temperature the factor drops to `floor`. Assumption — calibrate.
+    /// Below this temperature the factor drops to `floor` (a deliberate step: cold
+    /// dormancy, not a smooth decline). Assumption — calibrate.
     pub t_min: Celsius,
     /// Minimum factor (cold dormancy). Assumption — calibrate.
     pub floor: f64,
@@ -459,5 +460,13 @@ mod tests {
             ),
             Err(FoulingError::InvalidSegment("distance_to_coast"))
         ));
+    }
+    /// The temperature factor jumps at `t_min` by design (cold dormancy): just below 12 °C
+    /// it is the 0.1 floor, at 12 °C it is 2^(−1.3) ≈ 0.406. Documents the discontinuity.
+    #[test]
+    fn temperature_steps_up_at_t_min() {
+        let t = TemperatureResponse::default();
+        assert_eq!(t.factor(Celsius(11.999)), 0.1);
+        assert!(close(t.factor(Celsius(12.0)), 2f64.powf(-1.3), 1e-12));
     }
 }

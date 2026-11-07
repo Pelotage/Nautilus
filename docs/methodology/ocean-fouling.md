@@ -82,11 +82,11 @@ published curve exactly at 25 °C, full salinity, idle.
 
 | Event | slime / soft | a_calc | coating | propeller |
 |---|---|---|---|---|
-| DryDockFullBlast | 0 / 0 | 0 (and SST accumulators) | AHR ← out | rough ← 30 µm, a_prop_calc ← 0 |
+| DryDockFullBlast | 0 / 0 | 0 (and SST accumulators) | AHR ← out | rough ← `prop_clean` (30 µm), a_prop_calc ← 0 |
 | DryDockSpotRepair | 0 / 0 | 0 (and SST accumulators) | partial recovery | as full blast |
 | InWaterHullClean{ρ} | slime ← min(a, age(FR 0.75)); soft ← 0 | age at `ρ·SC` | — | — |
 | HullGrooming | as in-water clean | 0 | — | — |
-| PropellerPolish | — | — | — | rough ← min(rough, 40 µm), a_prop_calc ← 0 |
+| PropellerPolish | — | — | — | rough ← min(rough, `prop_polished` (40 µm)), a_prop_calc ← 0 |
 
 FR 0.75 corresponds to k_s ≈ 40 µm, GloFouling's post-cleaning floor.
 
@@ -133,7 +133,7 @@ long segments (for example, multi-week AIS berth stays) before simulating.
 |---|---|---|---|
 | Reference temperature | 25 °C | Uzun equatorial site (per GloFouling) | |
 | Q10 Stage 1 | 2.0 | spec | yes |
-| T floor / t_min / t_max | 0.1 / 12 °C / 32 °C | spec | yes |
+| T floor / t_min / t_max | 0.1 / 12 °C / 32 °C | spec | yes — the factor jumps at `t_min` (0.1 → 0.41 for Q10 2) by design |
 | Euryhaline salinity (0 / 0.5 / 1) | 2 / 5 / 20 PSU | spec | yes |
 | Stenohaline salinity | 10 / 17.5 / 25 PSU | spec (soft drop-out 10–25 PSU) | yes |
 | Settlement v50 / width | 1.25 kn / 0.2547 kn | spec | |

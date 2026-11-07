@@ -183,7 +183,13 @@ impl Stage1Model {
     }
     /// Hull fouling resistance fraction `min(hull_cap, slope·E)`.
     pub fn hull_fouling_fraction(&self) -> f64 {
-        (self.params.slope_per_day * self.exposure).min(self.params.hull_cap)
+        let f = self.params.slope_per_day * self.exposure;
+        // Not `f64::min`: that would turn a NaN state into the cap and hide it.
+        if f > self.params.hull_cap {
+            self.params.hull_cap
+        } else {
+            f
+        }
     }
 }
 
@@ -515,5 +521,13 @@ mod tests {
             Stage1Model::new(far_inside).is_err(),
             "near_coast beyond far_coast"
         );
+    }
+    /// A corrupted (NaN) exposure state must surface as NaN, not be hidden behind the 86%
+    /// cap (`f64::min` silently returns the cap for NaN).
+    #[test]
+    fn nan_state_is_not_masked_by_cap() {
+        let mut s = m();
+        s.exposure = f64::NAN;
+        assert!(s.hull_fouling_fraction().is_nan());
     }
 }
