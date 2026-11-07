@@ -15,8 +15,9 @@ mod common;
 
 use common::*;
 use nautilus_ocean::fouling::FoulingModel;
-use nautilus_ocean::fouling::calibration::{layer1_gaps, layer2_penalties};
+use nautilus_ocean::fouling::calibration::{layer1_gaps, layer2_penalties, layer3_ratio};
 use nautilus_ocean::fouling::events::MaintenanceEvent;
+use nautilus_ocean::fouling::guild_model::GuildModel;
 use nautilus_ocean::fouling::params::GuildParams;
 use nautilus_ocean::fouling::simulate::{CleaningPolicy, TimelineItem, simulate};
 use nautilus_ocean::fouling::uzun::{GaussianRating, hull_ks};
@@ -192,47 +193,14 @@ fn guild_layer2_glofouling_five_year_penalties() {
     assert!(eq > med);
 }
 
-/// Penalty recovered by an event after 1100 days on the equatorial profile.
-fn recovery<M: FoulingModel + Clone>(model: M, event: MaintenanceEvent) -> f64 {
-    with_tanker(|op| {
-        let mut m = model;
-        for item in &glofouling_profile(3.0, 25.0)[..220] {
-            if let TimelineItem::Segment(s) = item {
-                m.advance(s);
-            }
-        }
-        let before = m.power_penalty(op).power_factor();
-        m.apply(event);
-        m.apply(MaintenanceEvent::PropellerPolish);
-        before - m.power_penalty(op).power_factor()
-    })
-}
-
-/// Adland et al. find dry-docking recovers about twice as much performance as an
-/// in-water clean on tanker-like profiles. The model gives 1.26 (exposure model) and 1.08
-/// (age-clock model): the in-water clean is too effective, because it removes all fouling down
-/// to the residual and the only lasting difference is paint roughness.
+/// Layer 3 (cleaning and docking) of the guild model: after 1,100 days on the equatorial
+/// profile, a full-blast dry-dock recovers 1.6–2.4 times as much power as an in-water clean
+/// leaving 20 % base plates (each with a propeller polish). Oracle: Adland et al. (about 2:1
+/// on tanker-like profiles). Replaces the exposure / age-clock calibration target (1.1–1.3).
 #[test]
-#[ignore = "calibration target: dry-dock / in-water recovery ratio 1.1–1.3 vs Adland ~2"]
-fn adland_dry_dock_recovers_twice_in_water_clean() {
-    let clean = MaintenanceEvent::InWaterHullClean {
-        calcareous_remnant: 0.2,
-    };
-    for (stage, dd, iw) in [
-        (
-            "exposure",
-            recovery(exposure(), MaintenanceEvent::DryDockFullBlast),
-            recovery(exposure(), clean),
-        ),
-        (
-            "age_clock",
-            recovery(age_clock(), MaintenanceEvent::DryDockFullBlast),
-            recovery(age_clock(), clean),
-        ),
-    ] {
-        let ratio = dd / iw;
-        assert!((1.6..=2.4).contains(&ratio), "{stage}: ratio {ratio}");
-    }
+fn guild_layer3_dry_dock_recovers_twice_in_water_clean() {
+    let ratio = layer3_ratio(&GuildParams::default());
+    assert!((1.6..=2.4).contains(&ratio), "ratio {ratio}");
 }
 
 /// Hundley's destroyer (via GloFouling): +115% → +70% after propeller cleaning → +9%
@@ -241,8 +209,25 @@ fn adland_dry_dock_recovers_twice_in_water_clean() {
 /// more, and a small non-zero penalty remains (paint roughness and the cleaning floor).
 #[test]
 fn hundley_cleaning_sequence_pattern() {
+    hundley_pattern(age_clock());
+}
+
+/// The Hundley pattern for the guild model: propeller polish helps, the hull clean helps more,
+/// and a small non-zero penalty remains (paint damage, base plates and the slime floor).
+/// Hundley's destroyer had a thorough naval clean (+70 % → +9 %), so the whole hull is treated
+/// (η = 1). The default η = 0.63 is fitted to Adland's routine commercial cleans, which a
+/// destroyer's clean does not represent.
+#[test]
+fn guild_hundley_cleaning_sequence_pattern() {
+    let thorough = GuildParams {
+        clean_efficiency: 1.0,
+        ..GuildParams::default()
+    };
+    hundley_pattern(GuildModel::new(thorough).unwrap());
+}
+
+fn hundley_pattern<M: FoulingModel>(mut m: M) {
     with_tanker(|op| {
-        let mut m = age_clock();
         for item in &glofouling_profile(5.0, 25.0) {
             if let TimelineItem::Segment(s) = item {
                 m.advance(s);

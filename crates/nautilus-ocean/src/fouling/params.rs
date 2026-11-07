@@ -330,9 +330,13 @@ pub struct GuildParams {
     /// Scale λ on all Uzun-derived fouling roughness above the clean 30 µm reference:
     /// k_s = 30 + λ·(k_s,Uzun − 30). Fitted (Layer 2).
     pub roughness_scale: f64,
-    /// Paint roughness added per 100 % calcareous coverage scraped off by an in-water clean.
-    /// Fitted (Layer 3).
+    /// Paint roughness added per 100 % calcareous coverage scraped off by an in-water clean
+    /// (10 µm). Layer 3 showed realistic damage barely moves the dry-dock / in-water ratio, so
+    /// it is a fixed prior. Assumption — calibrate.
     pub clean_damage: Micrometres,
+    /// Share of the hull's fouling an in-water clean actually treats (niche areas, parts of the
+    /// flat bottom and sea chests are missed). Fitted (Layer 3).
+    pub clean_efficiency: f64,
     /// Coating AHR out of dry-dock (120 µm).
     pub ahr_out_docking: Micrometres,
     /// Coating AHR growth per year (20 µm). Assumption — calibrate.
@@ -425,7 +429,10 @@ impl Default for GuildParams {
             // Layer 2 fit: examples/calibrate_fouling.rs layer2, 2026-11-07. 5-year mean hull
             // penalty 0.330 equatorial (GloFouling 0.30) and 0.172 Mediterranean (0.22); limits ± 0.05.
             roughness_scale: 5.190796405078837e-1,
-            clean_damage: Micrometres(0.0),
+            clean_damage: Micrometres(10.0),
+            // Layer 3 fit: examples/calibrate_fouling.rs layer3, 2026-11-07. Dry-dock / in-water
+            // recovery ratio 2.000 (Adland ~2; limits 1.6–2.4).
+            clean_efficiency: 6.300333712297965e-1,
             ahr_out_docking: Micrometres(120.0),
             ahr_drift_per_year: Micrometres(20.0),
             spot_repair_recovery: 0.5,
@@ -498,6 +505,9 @@ impl GuildParams {
         check_positive(self.food_half_saturation.value(), "food_half_saturation")?;
         check_fraction(self.spot_repair_recovery, "spot_repair_recovery")?;
         check_positive(self.roughness_scale, "roughness_scale")?;
+        if !(self.clean_efficiency > 0.0 && self.clean_efficiency <= 1.0) {
+            return Err(FoulingError::InvalidParameter("clean_efficiency"));
+        }
         for (v, what) in [
             (self.capacity_17, "capacity_17"),
             (self.capacity_25, "capacity_25"),
@@ -628,5 +638,14 @@ mod tests {
             roughness_scale: f64::NAN,
             ..d
         }));
+        for eta in [0.0, 1.5, f64::NAN] {
+            assert!(
+                bad(GuildParams {
+                    clean_efficiency: eta,
+                    ..d
+                }),
+                "clean_efficiency {eta}"
+            );
+        }
     }
 }

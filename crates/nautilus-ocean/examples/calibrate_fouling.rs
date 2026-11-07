@@ -16,7 +16,6 @@ use nautilus_ocean::fouling::calibration::{
     layer1_gaps, layer2_penalties, layer3_ratio, nelder_mead,
 };
 use nautilus_ocean::fouling::params::{CALCAREOUS, GuildParams, SLIME, SOFT};
-use nautilus_units::Micrometres;
 
 /// Nelder–Mead with `rounds` restarts from the best point so far (fresh simplex each time).
 fn fit(
@@ -150,20 +149,23 @@ fn layer2(base: GuildParams) {
 }
 
 fn layer3(base: GuildParams) {
+    // Cleaning efficiency η fitted through a logistic transform (keeps 0 < η < 1); paint
+    // damage stays at its 10 µm prior.
+    let eta = |u: f64| 1.0 / (1.0 + (-u).exp());
     let set = |v: &[f64]| GuildParams {
-        clean_damage: Micrometres(v[0]),
+        clean_efficiency: eta(v[0]),
         ..base
     };
     let v = fit(
         |v| (layer3_ratio(&set(v)) - 2.0).powi(2),
-        &[10.0],
-        &[10.0],
+        &[0.0],
+        &[1.0],
         2,
         200,
     );
     println!(
-        "clean_damage {:e} µm; dry-dock / in-water ratio {:.4} (1.6–2.4)",
-        v[0],
+        "clean_efficiency {:e}; dry-dock / in-water ratio {:.4} (1.6–2.4)",
+        eta(v[0]),
         layer3_ratio(&set(&v))
     );
 }

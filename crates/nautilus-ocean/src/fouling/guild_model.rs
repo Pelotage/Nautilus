@@ -79,6 +79,9 @@ pub struct GuildModel {
     ahr: f64,
     prop_rough: f64,
     just_docked: bool,
+    /// True after an in-water clean that removed fouling, until the next segment with time
+    /// in it (a repeated clean misses the same areas, so it is a no-op).
+    just_cleaned: bool,
 }
 
 impl GuildModel {
@@ -97,6 +100,7 @@ impl GuildModel {
             ahr: params.ahr_out_docking.value(),
             prop_rough: params.prop_clean.value(),
             just_docked: true,
+            just_cleaned: false,
         })
     }
 
@@ -195,6 +199,7 @@ impl GuildModel {
 
     fn dry_dock(&mut self) {
         self.x = [0.0; N];
+        self.just_cleaned = false;
         self.plates = 0.0;
         self.prop_rough = self.params.prop_clean.value();
         self.just_docked = true;
@@ -206,6 +211,7 @@ impl FoulingModel for GuildModel {
         let dt = seg.duration().value();
         if dt > 0.0 {
             self.just_docked = false;
+            self.just_cleaned = false;
         }
         let r = SegmentRates::new(seg, &self.params);
         integrate::advance(&mut self.x, dt, &losses(&r), |s| gains(s, &r));
@@ -234,27 +240,46 @@ impl FoulingModel for GuildModel {
                 self.dry_dock();
             }
             MaintenanceEvent::InWaterHullClean { calcareous_remnant } => {
+                if self.just_cleaned {
+                    return;
+                }
                 let rho = if calcareous_remnant.is_nan() {
                     0.0
                 } else {
                     calcareous_remnant.clamp(0.0, 1.0)
                 };
-                self.clean_soft_classes();
+                let eta = self.params.clean_efficiency;
+                let before = self.clone();
+                // Treated share η: cleaned as on a fully cleaned hull. Untreated share 1 − η:
+                // unchanged. The state is the area-weighted mix of the two.
+                let slime = self.slime_rating();
+                let trim = if slime > CLEANED_SLIME_RATING {
+                    CLEANED_SLIME_RATING / slime
+                } else {
+                    1.0
+                };
+                for i in ix::SLIME {
+                    self.x[i] *= 1.0 - eta + eta * trim;
+                }
+                for i in ix::SOFT.into_iter().chain(ix::CALC) {
+                    self.x[i] *= 1.0 - eta;
+                }
                 // Base plates from earlier cleans stay; of the shells above them, a fraction ρ
-                // stays as new base plates. Cleaning twice in a row is therefore a no-op.
-                let shells = self.calcareous_coverage();
-                let old_plates = if self.plates < self.x[ix::DEAD] {
+                // stays as new base plates in the treated area.
+                let shells = before.calcareous_coverage();
+                let dead = before.x[ix::DEAD];
+                let old_plates = if self.plates < dead {
                     self.plates
                 } else {
-                    self.x[ix::DEAD]
+                    dead
                 };
                 let plates = old_plates + rho * (shells - old_plates);
-                for i in ix::CALC {
-                    self.x[i] = 0.0;
+                self.x[ix::DEAD] = eta * plates + (1.0 - eta) * dead;
+                self.plates = eta * plates + (1.0 - eta) * old_plates;
+                self.ahr += self.params.clean_damage.value() * eta * (shells - plates) / 100.0;
+                if self.x != before.x {
+                    self.just_cleaned = true;
                 }
-                self.x[ix::DEAD] = plates;
-                self.plates = plates;
-                self.ahr += self.params.clean_damage.value() * (shells - plates) / 100.0;
             }
             MaintenanceEvent::HullGrooming => {
                 self.clean_soft_classes();
@@ -406,13 +431,14 @@ mod tests {
         assert!((s.ahr().value() - 140.0).abs() < 1e-9);
     }
 
-    /// In-water clean (spec 5.4): soft fouling removed, slime trimmed to the 0.75 floor, live
-    /// barnacles removed, base plates ρ·(live + dead) left as dead shell, and paint damage
-    /// κ × coverage removed / 100.
+    /// In-water clean of the whole hull (η = 1, spec 5.4): soft fouling removed, slime trimmed
+    /// to the 0.75 floor, live barnacles removed, base plates ρ·(live + dead) left as dead
+    /// shell, and paint damage κ × coverage removed / 100.
     #[test]
     fn in_water_clean_effects() {
         let p = GuildParams {
             clean_damage: Micrometres(10.0),
+            clean_efficiency: 1.0,
             ..GuildParams::default()
         };
         let mut s = GuildModel::new(p).unwrap();
@@ -429,7 +455,8 @@ mod tests {
     }
 
     /// Cleaning is idempotent: a fresh hull is unchanged by a clean, and a second clean right
-    /// after the first removes nothing more and does no more paint damage.
+    /// after the first (no time in between, so the same areas are missed) removes nothing more
+    /// and does no more paint damage.
     #[test]
     fn cleaning_a_clean_hull_is_noop() {
         let p = GuildParams {
@@ -564,5 +591,39 @@ mod tests {
         a.apply(MaintenanceEvent::PropellerPolish);
         b.apply(MaintenanceEvent::PropellerPolish);
         assert_eq!(a.prop_ks(), b.prop_ks()); // drift roughness only: unscaled
+    }
+    /// Partial cleaning (efficiency η = 0.6): the treated 60 % of the hull is cleaned as
+    /// usual, the untreated 40 % keeps its fouling, and paint damage scales with what was
+    /// actually removed. Expected values: the area-weighted mix worked by hand.
+    #[test]
+    fn partial_clean_mixes_cleaned_and_untouched_areas() {
+        let p = GuildParams {
+            clean_damage: Micrometres(10.0),
+            clean_efficiency: 0.6,
+            ..GuildParams::default()
+        };
+        let mut s = GuildModel::new(p).unwrap();
+        s.advance(&idle(500.0, 28.0));
+        let (soft, live, dead, slime, ahr) = (
+            s.soft_rating(),
+            s.live_coverage(),
+            s.dead_coverage(),
+            s.slime_rating(),
+            s.ahr().value(),
+        );
+        let shells = live + dead;
+        s.apply(MaintenanceEvent::InWaterHullClean {
+            calcareous_remnant: 0.2,
+        });
+        assert!((s.soft_rating() - 0.4 * soft).abs() < 1e-9);
+        assert!((s.live_coverage() - 0.4 * live).abs() < 1e-9);
+        assert!((s.dead_coverage() - (0.6 * 0.2 * shells + 0.4 * dead)).abs() < 1e-9);
+        assert!((s.slime_rating() - (0.6 * slime.min(0.75) + 0.4 * slime)).abs() < 1e-9);
+        assert!((s.ahr().value() - (ahr + 10.0 * 0.6 * 0.8 * shells / 100.0)).abs() < 1e-9);
+        let once = s.clone();
+        s.apply(MaintenanceEvent::InWaterHullClean {
+            calcareous_remnant: 0.2,
+        });
+        assert_eq!(s, once);
     }
 }
