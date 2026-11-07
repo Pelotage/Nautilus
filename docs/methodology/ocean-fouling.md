@@ -101,8 +101,23 @@ FR 0.75 corresponds to k_s ≈ 40 µm, GloFouling's post-cleaning floor.
   within 0.6 percentage points (tested). The grid is solved once per process.
 - Hull fouling fraction = `frictional_share · max(0, G(k_s) − G(30 µm))`. The penalty is
   measured from the as-applied reference.
+  Roughness above 20 mm (beyond every source used) is treated as 20 mm.
+- The operating speed must be finite and positive (`OperatingPoint::new` rejects anything
+  else); friction coefficients are undefined for a ship that is not moving.
 - Coating fraction = `share · 0.044·((AHR/L)^(1/3) − (AHR_out/L)^(1/3)) / C_F`. This is the
   difference of two ITTC roughness allowances, so it is relative to the out-docking AHR.
+
+## Input checks and duplicate records
+
+- Segments with negative or non-finite duration, speed, salinity or distance, or a
+  non-finite temperature, are rejected.
+- Model parameters are rejected if they would make the power factor NaN, infinite or
+  negative: non-positive Q10 or settlement width, a propeller-loss cap of 1 or more,
+  fractions outside [0, 1], or salinity breakpoints and coast distances out of order.
+- Cleaning policies are built with `CleaningPolicy::triggered`, which requires a finite,
+  non-negative trigger and a finite, positive interval.
+- A spot-repair docking recorded twice with no time in between counts once, so a
+  duplicated docking record cannot compound the paint recovery.
 
 ## Segmentation
 
