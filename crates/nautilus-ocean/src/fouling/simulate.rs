@@ -88,14 +88,14 @@ pub struct TrajectoryPoint {
 /// use nautilus_ocean::fouling::granville::GranvilleTable;
 /// use nautilus_ocean::fouling::power::ShipParticulars;
 /// use nautilus_ocean::fouling::simulate::{simulate, CleaningPolicy, TimelineItem};
-/// use nautilus_ocean::fouling::stage1::{Stage1Model, Stage1Params};
+/// use nautilus_ocean::fouling::{exposure_model::{ExposureModel}, params::{ExposureParams}};
 /// use nautilus_ocean::fouling::OperatingPoint;
 /// use nautilus_units::{Celsius, Days, Kilometres, Knots, Metres, Psu};
 ///
 /// let berth = Segment::new(Days(200.0), Knots(0.0), Celsius(25.0), Psu(35.0), PortStatus::Berth, Kilometres(0.0))?;
 /// let (ship, table) = (ShipParticulars::new(Metres(176.0), 0.5)?, GranvilleTable::new());
 /// let op = OperatingPoint::new(&ship, Knots(14.0), &table)?;
-/// let mut model = Stage1Model::new(Stage1Params::default())?;
+/// let mut model = ExposureModel::new(ExposureParams::default())?;
 /// let traj = simulate(&mut model, &[TimelineItem::Segment(berth)], CleaningPolicy::PROACTIVE, &op);
 /// // 200 idle days → 24% ≥ the 20% trigger, so the policy cleans hull and propeller.
 /// let events: Vec<_> = traj.iter().filter_map(|p| p.event).collect();
@@ -195,7 +195,7 @@ mod tests {
     use crate::fouling::events::MaintenanceEvent;
     use crate::fouling::granville::GranvilleTable;
     use crate::fouling::power::ShipParticulars;
-    use crate::fouling::stage1::{Stage1Model, Stage1Params};
+    use crate::fouling::{exposure_model::ExposureModel, params::ExposureParams};
     use nautilus_units::{Celsius, Days, Kilometres, Knots, Metres, Psu};
 
     fn berth(days: f64) -> TimelineItem {
@@ -231,7 +231,7 @@ mod tests {
         );
         let op = OperatingPoint::new(&ship, Knots(14.0), &table).unwrap();
         simulate(
-            &mut Stage1Model::new(Stage1Params::default()).unwrap(),
+            &mut ExposureModel::new(ExposureParams::default()).unwrap(),
             timeline,
             policy,
             &op,

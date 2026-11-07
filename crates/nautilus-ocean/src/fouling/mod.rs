@@ -14,7 +14,7 @@
 //!
 //! # Example
 //!
-//! A tanker idles 200 days at a 25 °C berth; the Stage 1 model turns that into a power
+//! A tanker idles 200 days at a 25 °C berth; the exposure model model turns that into a power
 //! penalty, and a dry-docking resets it to the clean hull:
 //!
 //! ```
@@ -22,12 +22,12 @@
 //! use nautilus_ocean::fouling::events::MaintenanceEvent;
 //! use nautilus_ocean::fouling::granville::GranvilleTable;
 //! use nautilus_ocean::fouling::power::ShipParticulars;
-//! use nautilus_ocean::fouling::stage1::{Stage1Model, Stage1Params};
+//! use nautilus_ocean::fouling::{exposure_model::{ExposureModel}, params::{ExposureParams}};
 //! use nautilus_ocean::fouling::{FoulingModel, OperatingPoint};
 //! use nautilus_units::{Celsius, Days, Kilometres, Knots, Metres, Psu};
 //!
 //! let berth = Segment::new(Days(200.0), Knots(0.0), Celsius(25.0), Psu(35.0), PortStatus::Berth, Kilometres(0.0))?;
-//! let mut model = Stage1Model::new(Stage1Params::default())?;
+//! let mut model = ExposureModel::new(ExposureParams::default())?;
 //! model.advance(&berth);
 //! assert!((model.hull_fouling_fraction() - 0.24).abs() < 1e-12); // 0.0012 per idle day
 //!
@@ -44,13 +44,14 @@ use std::fmt;
 
 use nautilus_units::Knots;
 
+pub mod age_clock_model;
 pub mod environment;
 pub mod events;
+pub mod exposure_model;
 pub mod granville;
+pub mod params;
 pub mod power;
 pub mod simulate;
-pub mod stage1;
-pub mod stage2;
 pub mod uzun;
 
 /// A fouling model: continuous growth along segments, jumps at events, and an

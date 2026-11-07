@@ -1,4 +1,4 @@
-//! Stage 2: Uzun et al. (2019) three fouling classes (slime, soft, calcareous)
+//! Age-clock model: Uzun et al. (2019) three fouling classes (slime, soft, calcareous)
 //! driven by temperature-scaled *age clocks*, with an Uzun → k_s → Granville →
 //! ΔC_F observation chain.
 //!
@@ -17,14 +17,16 @@
 //! Parameters are for self-polishing (SPC) coatings only; foul-release coatings
 //! are refused with [`FoulingError::UnsupportedCoating`].
 
-use nautilus_units::{Celsius, DAYS_PER_YEAR, Days, Micrometres, Psu};
+use nautilus_units::{DAYS_PER_YEAR, Micrometres};
 
-use super::environment::{GateParams, SalinityResponse, Segment, TemperatureResponse};
+use super::environment::Segment;
 use super::events::MaintenanceEvent;
+use super::params::{
+    AgeClockParams, CoatingType, check_fraction, check_non_negative, check_responses,
+};
 use super::power::{
     PowerPenalty, coating_resistance_fraction, fouling_resistance_fraction, propeller_eta_loss,
 };
-use super::stage1::{check_fraction, check_non_negative, check_responses};
 use super::uzun::{self, EQ_CALCAREOUS, EQ_FAST_ASYM, EQ_MAIN_ASYM, EQ_SLIME, EQ_SOFT};
 use super::{FoulingError, FoulingModel, OperatingPoint};
 
@@ -34,104 +36,10 @@ const CLEANED_SLIME_RATING: f64 = 0.75;
 /// Temperature cap used in the exposure-weighted mean SST.
 const MEAN_SST_CAP: f64 = 32.0;
 
-/// Hull coating type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CoatingType {
-    /// Self-polishing copolymer antifouling (the coating Uzun's panels used).
-    SelfPolishing,
-    /// Foul-release (silicone/fluoropolymer) coating. Not supported yet.
-    FoulRelease,
-}
-
-/// Stage 2 parameters. See [`Stage2Params::default`] for values and sources.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Stage2Params {
-    /// Coating type; only [`CoatingType::SelfPolishing`] is supported.
-    pub coating: CoatingType,
-    /// Settlement / propagule gate.
-    pub gate: GateParams,
-    /// Slime clock temperature response (Q10 4.1554, fitted to Uzun's two sites).
-    pub slime_temp: TemperatureResponse,
-    /// Soft-fouling clock temperature response (Q10 1.5406, fitted to Uzun's two sites).
-    pub soft_temp: TemperatureResponse,
-    /// Calcareous clock temperature response (Q10 2.0417, fitted to the coverage
-    /// logistic midpoints; the spec's 2.3 is not used).
-    pub calc_temp: TemperatureResponse,
-    /// Salinity response of slime and soft fouling (stenohaline). Assumption — calibrate.
-    pub soft_salinity: SalinityResponse,
-    /// Salinity response of calcareous fouling (euryhaline). Assumption — calibrate.
-    pub hard_salinity: SalinityResponse,
-    /// Mean SST at which the cold (Mediterranean) asymptotes apply (17 °C).
-    pub cold_asym_temp: Celsius,
-    /// Mean SST at which the warm (equatorial) asymptotes apply (25 °C).
-    pub warm_asym_temp: Celsius,
-    /// Cold-site main coverage asymptote (50%). Placeholder from two sites —
-    /// assumption — calibrate.
-    pub cold_main_asym: f64,
-    /// Cold-site fast coverage asymptote (0%). Placeholder from two sites —
-    /// assumption — calibrate.
-    pub cold_fast_asym: f64,
-    /// Salinity below which a long enough freshwater stay culls soft fouling (2 PSU).
-    pub fresh_threshold: Psu,
-    /// Minimum duration of a freshwater stay (consecutive segments below
-    /// `fresh_threshold`) for its one cull (3 h).
-    pub cull_min_duration: Days,
-    /// Rating multiplier applied by a freshwater cull (0.5; range 0–0.5).
-    /// Assumption — calibrate.
-    pub cull_factor: f64,
-    /// Coating AHR out of dry-dock (120 µm).
-    pub ahr_out_docking: Micrometres,
-    /// Coating AHR growth per year (20 µm; range 3–40). Assumption — calibrate.
-    pub ahr_drift_per_year: Micrometres,
-    /// Fraction of excess coating roughness recovered by a spot repair (0.5).
-    /// Assumption — calibrate.
-    pub spot_repair_recovery: f64,
-    /// Propeller roughness when new or after dry-dock (30 µm). Assumption — calibrate.
-    pub prop_clean: Micrometres,
-    /// Propeller roughness after polishing (40 µm). Assumption — calibrate.
-    pub prop_polished: Micrometres,
-    /// Propeller roughness growth per year (100 µm, Rubert scale). Assumption — calibrate.
-    pub prop_drift_per_year: Micrometres,
-    /// Cap on drift-driven propeller roughness (300 µm). Assumption — calibrate.
-    pub prop_rough_cap: Micrometres,
-}
-
-impl Default for Stage2Params {
-    fn default() -> Self {
-        let q = |q10| TemperatureResponse {
-            q10,
-            ..TemperatureResponse::default()
-        };
-        Stage2Params {
-            coating: CoatingType::SelfPolishing,
-            gate: GateParams::default(),
-            slime_temp: q(4.1554),
-            soft_temp: q(1.5406),
-            calc_temp: q(2.0417),
-            soft_salinity: SalinityResponse::STENOHALINE,
-            hard_salinity: SalinityResponse::EURYHALINE,
-            cold_asym_temp: Celsius(17.0),
-            warm_asym_temp: Celsius(25.0),
-            cold_main_asym: 50.0,
-            cold_fast_asym: 0.0,
-            fresh_threshold: Psu(2.0),
-            cull_min_duration: Days(0.125),
-            cull_factor: 0.5,
-            ahr_out_docking: Micrometres(120.0),
-            ahr_drift_per_year: Micrometres(20.0),
-            spot_repair_recovery: 0.5,
-            prop_clean: Micrometres(30.0),
-            prop_polished: Micrometres(40.0),
-            prop_drift_per_year: Micrometres(100.0),
-            prop_rough_cap: Micrometres(300.0),
-        }
-    }
-}
-
-/// Stage 2 fouling state. Starts freshly docked.
+/// Age-clock model fouling state. Starts freshly docked.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Stage2Model {
-    params: Stage2Params,
+pub struct AgeClockModel {
+    params: AgeClockParams,
     a_slime: f64,
     a_soft: f64,
     a_calc: f64,
@@ -145,11 +53,11 @@ pub struct Stage2Model {
     just_docked: bool,
 }
 
-impl Stage2Model {
+impl AgeClockModel {
     /// Builds a freshly docked model. Returns
     /// [`FoulingError::UnsupportedCoating`] for foul-release coatings and
     /// [`FoulingError::InvalidParameter`] for non-finite or negative values.
-    pub fn new(params: Stage2Params) -> Result<Self, FoulingError> {
+    pub fn new(params: AgeClockParams) -> Result<Self, FoulingError> {
         if params.coating != CoatingType::SelfPolishing {
             return Err(FoulingError::UnsupportedCoating);
         }
@@ -180,7 +88,7 @@ impl Stage2Model {
         if !(cold.is_finite() && warm.is_finite() && warm > cold) {
             return Err(FoulingError::InvalidParameter("asymptote temperatures"));
         }
-        Ok(Stage2Model {
+        Ok(AgeClockModel {
             params,
             a_slime: 0.0,
             a_soft: 0.0,
@@ -275,7 +183,7 @@ impl Stage2Model {
     }
 }
 
-impl FoulingModel for Stage2Model {
+impl FoulingModel for AgeClockModel {
     fn advance(&mut self, seg: &Segment) {
         let p = self.params;
         let dt = seg.duration().value();
@@ -397,23 +305,23 @@ mod tests {
         )
         .unwrap()
     }
-    fn m() -> Stage2Model {
-        Stage2Model::new(Stage2Params::default()).unwrap()
+    fn m() -> AgeClockModel {
+        AgeClockModel::new(AgeClockParams::default()).unwrap()
     }
 
-    /// Stage 2 is only calibrated for self-polishing paint; foul-release is refused.
+    /// Age-clock model is only calibrated for self-polishing paint; foul-release is refused.
     #[test]
     fn foul_release_refused() {
-        let p = Stage2Params {
+        let p = AgeClockParams {
             coating: CoatingType::FoulRelease,
-            ..Stage2Params::default()
+            ..AgeClockParams::default()
         };
         assert!(matches!(
-            Stage2Model::new(p),
+            AgeClockModel::new(p),
             Err(FoulingError::UnsupportedCoating)
         ));
     }
-    /// At 25 °C in port the Stage 2 model reproduces Uzun's published equatorial curves
+    /// At 25 °C in port the age-clock model model reproduces Uzun's published equatorial curves
     /// exactly (slime at 50 d, soft at 200 d, coverage at 393 d).
     #[test]
     fn reproduces_equatorial_curves_at_25c() {
@@ -580,15 +488,15 @@ mod tests {
         s.advance(&idle(0.5, 25.0, 0.3));
         assert!(close(s.soft_rating(), 12.5, 1e-6));
     }
-    /// Stage 2 rejects fraction parameters outside [0, 1] (e.g. a cull that would add fouling).
+    /// Age-clock model rejects fraction parameters outside [0, 1] (e.g. a cull that would add fouling).
     #[test]
     fn rejects_out_of_range_fractions() {
-        let p = Stage2Params {
+        let p = AgeClockParams {
             cull_factor: 1.5,
-            ..Stage2Params::default()
+            ..AgeClockParams::default()
         };
         assert!(matches!(
-            Stage2Model::new(p),
+            AgeClockModel::new(p),
             Err(FoulingError::InvalidParameter(_))
         ));
     }
@@ -613,7 +521,7 @@ mod tests {
         );
         assert!(close(s.calcareous_coverage(), expected, 1e-9 * expected));
     }
-    /// Stage 2 spot repair: recovers half the paint roughness gained since docking, and a
+    /// Age-clock model spot repair: recovers half the paint roughness gained since docking, and a
     /// duplicated record (no time at sea in between) counts once.
     #[test]
     fn spot_repair_partial_and_counts_once() {
@@ -625,7 +533,7 @@ mod tests {
         s.apply(MaintenanceEvent::DryDockSpotRepair);
         assert!(close(s.ahr().value(), 140.0, 1e-9));
     }
-    /// Stage 2 grooming removes slime to the 0.75 floor, all soft fouling *and* the early
+    /// Age-clock model grooming removes slime to the 0.75 floor, all soft fouling *and* the early
     /// barnacles (coverage back to its age-0 value).
     #[test]
     fn grooming_removes_early_calcareous() {
@@ -642,7 +550,7 @@ mod tests {
         assert!(close(s.slime_rating(), 0.75, 1e-9));
         assert!(close(s.soft_rating(), EQ_SOFT.seed(), 1e-15));
     }
-    /// Stage 2's coating penalty comes from paint roughness drift (20 µm/yr from 120 µm).
+    /// Age-clock model's coating penalty comes from paint roughness drift (20 µm/yr from 120 µm).
     #[test]
     fn coating_penalty_from_paint_drift() {
         let (ship, table) = (
@@ -671,12 +579,12 @@ mod tests {
         assert!(close(at.soft_rating(), 25.0, 1e-6));
         assert!(close(under.soft_rating(), 50.0, 1e-9));
     }
-    /// Every Stage 2 parameter check: NaN / negative / out-of-range values are rejected,
+    /// Every age-clock model parameter check: NaN / negative / out-of-range values are rejected,
     /// as is a cold asymptote temperature at or above the warm one.
     #[test]
     fn every_parameter_check() {
-        let d = Stage2Params::default();
-        type Set = fn(&mut Stage2Params, f64);
+        let d = AgeClockParams::default();
+        type Set = fn(&mut AgeClockParams, f64);
         let setters: [(&str, Set); 14] = [
             ("cold_main", |p, v| p.cold_main_asym = v),
             ("cold_fast", |p, v| p.cold_fast_asym = v),
@@ -710,18 +618,21 @@ mod tests {
                 let mut p = d;
                 set(&mut p, v);
                 assert!(
-                    matches!(Stage2Model::new(p), Err(FoulingError::InvalidParameter(_))),
+                    matches!(
+                        AgeClockModel::new(p),
+                        Err(FoulingError::InvalidParameter(_))
+                    ),
                     "{name} = {v}"
                 );
             }
         }
         for (cold, warm) in [(25.0, 25.0), (26.0, 25.0), (f64::NAN, 25.0)] {
-            let p = Stage2Params {
+            let p = AgeClockParams {
                 cold_asym_temp: Celsius(cold),
                 warm_asym_temp: Celsius(warm),
                 ..d
             };
-            assert!(Stage2Model::new(p).is_err(), "cold {cold} warm {warm}");
+            assert!(AgeClockModel::new(p).is_err(), "cold {cold} warm {warm}");
         }
     }
     /// Docking twice in a row (full blast) gives the same state as docking once, and a

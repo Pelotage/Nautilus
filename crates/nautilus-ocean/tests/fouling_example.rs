@@ -50,7 +50,7 @@ fn example_output_is_well_formed() {
         let f: Vec<&str> = line.split(',').collect();
         assert_eq!(f.len(), 8, "{line}");
         assert!(
-            ["stage1", "stage2"].contains(&f[1])
+            ["exposure", "age_clock"].contains(&f[1])
                 && ["none", "reactive", "proactive"].contains(&f[2]),
             "{line}"
         );
@@ -63,7 +63,7 @@ fn example_output_is_well_formed() {
     }
     assert!(rows > 6 * 366, "only {rows} rows");
     assert_eq!(summaries.len(), 6);
-    for stage in ["stage1", "stage2"] {
+    for stage in ["exposure", "age_clock"] {
         let get = |p: &str| summaries[&(stage.to_string(), p.to_string())];
         assert!(
             get("proactive") < get("reactive") && get("reactive") < get("none"),

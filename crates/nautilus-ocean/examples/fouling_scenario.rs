@@ -1,5 +1,5 @@
 //! Prints a CSV fouling trajectory for the GloFouling equatorial profile
-//! (5 years), for Stage 1 and Stage 2 under each cleaning policy, followed by one
+//! (5 years), for exposure model and age-clock model under each cleaning policy, followed by one
 //! summary line per (stage, policy) with the mean power factor.
 //!
 //! Run: `cargo run -p nautilus-ocean --example fouling_scenario`
@@ -10,9 +10,9 @@ use nautilus_ocean::fouling::power::ShipParticulars;
 use nautilus_ocean::fouling::simulate::{
     CleaningPolicy, TimelineItem, TrajectoryPoint, mean_power_factor, simulate,
 };
-use nautilus_ocean::fouling::stage1::{Stage1Model, Stage1Params};
-use nautilus_ocean::fouling::stage2::{Stage2Model, Stage2Params};
 use nautilus_ocean::fouling::{FoulingError, OperatingPoint};
+use nautilus_ocean::fouling::{age_clock_model::AgeClockModel, params::AgeClockParams};
+use nautilus_ocean::fouling::{exposure_model::ExposureModel, params::ExposureParams};
 use std::error::Error;
 use std::io::{self, Write};
 
@@ -78,20 +78,20 @@ pub fn write_scenario(out: &mut impl Write) -> Result<(), Box<dyn Error>> {
     let mut runs: Vec<(&str, &str, Vec<TrajectoryPoint>)> = Vec::new();
     for (name, policy) in policies {
         runs.push((
-            "stage1",
+            "exposure",
             name,
             simulate(
-                &mut Stage1Model::new(Stage1Params::default())?,
+                &mut ExposureModel::new(ExposureParams::default())?,
                 &timeline,
                 policy,
                 &op,
             ),
         ));
         runs.push((
-            "stage2",
+            "age_clock",
             name,
             simulate(
-                &mut Stage2Model::new(Stage2Params::default())?,
+                &mut AgeClockModel::new(AgeClockParams::default())?,
                 &timeline,
                 policy,
                 &op,

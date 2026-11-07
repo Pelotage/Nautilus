@@ -35,10 +35,10 @@ fn med_coverage(age: f64) -> f64 {
     0.00517 / (1.0 + (10.0 - 40.0 * age).exp()) + 50.0 / (1.0 + (32.81 - 0.04715 * age).exp())
 }
 
-/// Runs Stage 2 day by day at the Mediterranean site (17 °C, berth, 35 PSU) and returns,
+/// Runs age-clock model day by day at the Mediterranean site (17 °C, berth, 35 PSU) and returns,
 /// for each day, (slime, soft, coverage, hull k_s µm) from the model and from Uzun's curves.
 fn med_comparison(days: usize) -> Vec<([f64; 4], [f64; 4])> {
-    let mut m = stage2();
+    let mut m = age_clock();
     (1..=days)
         .map(|d| {
             m.advance(&idle(1.0, 17.0, 35.0));
@@ -129,7 +129,7 @@ fn med_site_shape_gap_does_not_grow() {
 /// 2 points (soft) and 3 percentage points (coverage). Needs class-specific shape
 /// parameters that vary with temperature, not only a Q10 time scaling.
 #[test]
-#[ignore = "calibration target: Stage 2 reproduces Mediterranean timing but not curve widths"]
+#[ignore = "calibration target: age-clock model reproduces Mediterranean timing but not curve widths"]
 fn med_site_shape_calibration_target() {
     let s = med_comparison(1500);
     let worst = |k: usize| {
@@ -164,29 +164,29 @@ fn five_year_mean_hull<M: FoulingModel>(mut model: M, sst: f64) -> f64 {
 }
 
 /// GloFouling 2022 reports cumulative 5-year penalties without cleaning of +30%
-/// (equatorial) and +22% (Mediterranean). Stage 1 gives 0.336 and 0.193 — within 5
+/// (equatorial) and +22% (Mediterranean). Exposure model gives 0.336 and 0.193 — within 5
 /// percentage points. Assumes GloFouling's Mediterranean ship has the same idle pattern
 /// as the equatorial one, at 17 °C.
 #[test]
-fn glofouling_five_year_penalty_stage1() {
+fn glofouling_five_year_penalty_exposure() {
     let (eq, med) = (
-        five_year_mean_hull(stage1(), 25.0),
-        five_year_mean_hull(stage1(), 17.0),
+        five_year_mean_hull(exposure(), 25.0),
+        five_year_mean_hull(exposure(), 17.0),
     );
     assert!((eq - 0.30).abs() <= 0.05, "equatorial {eq}");
     assert!((med - 0.22).abs() <= 0.05, "mediterranean {med}");
     assert!(eq > med, "warm water must foul more");
 }
 
-/// Same GloFouling check for Stage 2: the Mediterranean value (0.228) agrees, but the
+/// Same GloFouling check for age-clock model: the Mediterranean value (0.228) agrees, but the
 /// equatorial one is 0.427 — 13 points above GloFouling's 30%, because Uzun's equatorial
 /// calcareous coverage reaches ~97% within 5 years of idle time and maps to ~10 mm roughness.
 #[test]
-#[ignore = "calibration target: Stage 2 equatorial 5-year penalty 0.43 vs GloFouling 0.30"]
-fn glofouling_five_year_penalty_stage2() {
+#[ignore = "calibration target: age-clock model equatorial 5-year penalty 0.43 vs GloFouling 0.30"]
+fn glofouling_five_year_penalty_age_clock() {
     let (eq, med) = (
-        five_year_mean_hull(stage2(), 25.0),
-        five_year_mean_hull(stage2(), 17.0),
+        five_year_mean_hull(age_clock(), 25.0),
+        five_year_mean_hull(age_clock(), 17.0),
     );
     assert!((med - 0.22).abs() <= 0.05, "mediterranean {med}");
     assert!((eq - 0.30).abs() <= 0.05, "equatorial {eq}");
@@ -209,8 +209,8 @@ fn recovery<M: FoulingModel + Clone>(model: M, event: MaintenanceEvent) -> f64 {
 }
 
 /// Adland et al. find dry-docking recovers about twice as much performance as an
-/// in-water clean on tanker-like profiles. The model gives 1.26 (Stage 1) and 1.08
-/// (Stage 2): the in-water clean is too effective, because it removes all fouling down
+/// in-water clean on tanker-like profiles. The model gives 1.26 (exposure model) and 1.08
+/// (age-clock model): the in-water clean is too effective, because it removes all fouling down
 /// to the residual and the only lasting difference is paint roughness.
 #[test]
 #[ignore = "calibration target: dry-dock / in-water recovery ratio 1.1–1.3 vs Adland ~2"]
@@ -220,14 +220,14 @@ fn adland_dry_dock_recovers_twice_in_water_clean() {
     };
     for (stage, dd, iw) in [
         (
-            "stage1",
-            recovery(stage1(), MaintenanceEvent::DryDockFullBlast),
-            recovery(stage1(), clean),
+            "exposure",
+            recovery(exposure(), MaintenanceEvent::DryDockFullBlast),
+            recovery(exposure(), clean),
         ),
         (
-            "stage2",
-            recovery(stage2(), MaintenanceEvent::DryDockFullBlast),
-            recovery(stage2(), clean),
+            "age_clock",
+            recovery(age_clock(), MaintenanceEvent::DryDockFullBlast),
+            recovery(age_clock(), clean),
         ),
     ] {
         let ratio = dd / iw;
@@ -242,7 +242,7 @@ fn adland_dry_dock_recovers_twice_in_water_clean() {
 #[test]
 fn hundley_cleaning_sequence_pattern() {
     with_tanker(|op| {
-        let mut m = stage2();
+        let mut m = age_clock();
         for item in &glofouling_profile(5.0, 25.0) {
             if let TimelineItem::Segment(s) = item {
                 m.advance(s);

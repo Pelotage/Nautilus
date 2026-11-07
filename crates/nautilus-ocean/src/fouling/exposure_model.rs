@@ -1,136 +1,24 @@
-//! Stage 1: one hull exposure clock, coating roughness drift and propeller
+//! Exposure model: one hull exposure clock, coating roughness drift and propeller
 //! efficiency drift.
 //!
 //! The hull clock `E` advances by `T(sst)·S(salinity)·gate(segment)·Δ` per
 //! segment; the hull fouling resistance fraction is `min(hull_cap, slope·E)`.
-//! Stage 1 has a single clock, so there is no freshwater cull: freshwater only
-//! pauses the clock (salinity factor 0). Stage 2 models the cull.
+//! This model has a single clock, so there is no freshwater cull: freshwater only
+//! pauses the clock (salinity factor 0). The age-clock model handles the cull.
 
 use nautilus_units::{DAYS_PER_YEAR, Days, Micrometres};
 
-use super::environment::{GateParams, SalinityResponse, Segment, TemperatureResponse};
+use super::environment::Segment;
 use super::events::MaintenanceEvent;
+use super::params::ExposureParams;
+use super::params::{check_fraction, check_non_negative, check_responses};
 use super::power::{PowerPenalty, coating_resistance_fraction};
 use super::{FoulingError, FoulingModel, OperatingPoint};
 
-/// Stage 1 parameters. See [`Stage1Params::default`] for sources.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Stage1Params {
-    /// Temperature response of the hull clock (Q10 2).
-    pub temperature: TemperatureResponse,
-    /// Salinity response of the hull clock (euryhaline).
-    pub salinity: SalinityResponse,
-    /// Settlement / propagule gate.
-    pub gate: GateParams,
-    /// Hull fouling resistance fraction per exposure day. 0.0012 (±50%), derived
-    /// from GloFouling's equatorial profile. Assumption — calibrate.
-    pub slope_per_day: f64,
-    /// Cap on the hull fouling resistance fraction (0.86, Schultz heavy
-    /// calcareous shaft-power increase).
-    pub hull_cap: f64,
-    /// Coating average hull roughness out of dry-dock (120 µm).
-    pub ahr_out_docking: Micrometres,
-    /// Coating AHR growth per year (20 µm; range 3–40). Assumption — calibrate.
-    pub ahr_drift_per_year: Micrometres,
-    /// Propeller efficiency loss per year (0.026, van Ballegooijen via GloFouling).
-    pub prop_drift_per_year: f64,
-    /// Cap on propeller efficiency loss (0.32).
-    pub prop_cap: f64,
-    /// Exposure left after an in-water clean or grooming (13 days ≈ +1.6% at the
-    /// 40 µm GloFouling post-cleaning floor, tanker). Assumption — calibrate.
-    pub residual_exposure: Days,
-    /// Fraction of excess coating roughness recovered by a spot repair (0.5).
-    /// Assumption — calibrate.
-    pub spot_repair_recovery: f64,
-}
-
-impl Default for Stage1Params {
-    fn default() -> Self {
-        Stage1Params {
-            temperature: TemperatureResponse::default(),
-            salinity: SalinityResponse::EURYHALINE,
-            gate: GateParams::default(),
-            slope_per_day: 0.0012,
-            hull_cap: 0.86,
-            ahr_out_docking: Micrometres(120.0),
-            ahr_drift_per_year: Micrometres(20.0),
-            prop_drift_per_year: 0.026,
-            prop_cap: 0.32,
-            residual_exposure: Days(13.0),
-            spot_repair_recovery: 0.5,
-        }
-    }
-}
-
-/// Rejects non-finite or negative values.
-pub(crate) fn check_non_negative(v: f64, what: &'static str) -> Result<(), FoulingError> {
-    if v.is_finite() && v >= 0.0 {
-        Ok(())
-    } else {
-        Err(FoulingError::InvalidParameter(what))
-    }
-}
-
-/// Rejects values outside [0, 1].
-pub(crate) fn check_fraction(v: f64, what: &'static str) -> Result<(), FoulingError> {
-    if (0.0..=1.0).contains(&v) {
-        Ok(())
-    } else {
-        Err(FoulingError::InvalidParameter(what))
-    }
-}
-
-/// Rejects non-finite or non-positive values.
-fn check_positive(v: f64, what: &'static str) -> Result<(), FoulingError> {
-    if v.is_finite() && v > 0.0 {
-        Ok(())
-    } else {
-        Err(FoulingError::InvalidParameter(what))
-    }
-}
-
-/// Validates the shared response parameters: all finite; Q10 and settlement
-/// width positive; salinity breakpoints and coast distances non-negative and
-/// ordered; gate fractions in [0, 1].
-pub(crate) fn check_responses(
-    temps: &[TemperatureResponse],
-    salinities: &[SalinityResponse],
-    gate: &GateParams,
-) -> Result<(), FoulingError> {
-    for t in temps {
-        check_positive(t.q10, "temperature.q10")?;
-        check_non_negative(t.floor, "temperature.floor")?;
-        for v in [t.t_ref.value(), t.t_min.value(), t.t_max.value()] {
-            if !v.is_finite() {
-                return Err(FoulingError::InvalidParameter("temperature limits"));
-            }
-        }
-    }
-    for s in salinities {
-        let (z, h, f) = (s.zero_below.value(), s.half_at.value(), s.full_at.value());
-        for v in [z, h, f] {
-            check_non_negative(v, "salinity response")?;
-        }
-        if !(z <= h && h <= f) {
-            return Err(FoulingError::InvalidParameter("salinity response order"));
-        }
-    }
-    check_non_negative(gate.settle_v50.value(), "gate.settle_v50")?;
-    check_positive(gate.settle_width.value(), "gate.settle_width")?;
-    check_non_negative(gate.near_coast.value(), "gate.near_coast")?;
-    check_non_negative(gate.far_coast.value(), "gate.far_coast")?;
-    if gate.near_coast.value() > gate.far_coast.value() {
-        return Err(FoulingError::InvalidParameter("gate coast distances order"));
-    }
-    check_fraction(gate.offshore_floor, "gate.offshore_floor")?;
-    check_fraction(gate.sailing_fraction, "gate.sailing_fraction")?;
-    Ok(())
-}
-
-/// Stage 1 fouling state. Starts freshly docked.
+/// Exposure model fouling state. Starts freshly docked.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Stage1Model {
-    params: Stage1Params,
+pub struct ExposureModel {
+    params: ExposureParams,
     exposure: f64,
     ahr: f64,
     prop: f64,
@@ -138,11 +26,11 @@ pub struct Stage1Model {
     just_docked: bool,
 }
 
-impl Stage1Model {
+impl ExposureModel {
     /// Builds a freshly docked model. Rejects non-finite or negative parameters,
     /// fractions outside [0, 1] and `prop_cap ≥ 1` with
     /// [`FoulingError::InvalidParameter`].
-    pub fn new(params: Stage1Params) -> Result<Self, FoulingError> {
+    pub fn new(params: ExposureParams) -> Result<Self, FoulingError> {
         check_responses(&[params.temperature], &[params.salinity], &params.gate)?;
         for (v, what) in [
             (params.slope_per_day, "slope_per_day"),
@@ -160,7 +48,7 @@ impl Stage1Model {
         if params.prop_cap >= 1.0 {
             return Err(FoulingError::InvalidParameter("prop_cap"));
         }
-        Ok(Stage1Model {
+        Ok(ExposureModel {
             params,
             exposure: 0.0,
             ahr: params.ahr_out_docking.value(),
@@ -193,7 +81,7 @@ impl Stage1Model {
     }
 }
 
-impl FoulingModel for Stage1Model {
+impl FoulingModel for ExposureModel {
     fn advance(&mut self, seg: &Segment) {
         let p = &self.params;
         let dt = seg.duration().value();
@@ -290,11 +178,11 @@ mod tests {
         )
         .unwrap()
     }
-    fn m() -> Stage1Model {
-        Stage1Model::new(Stage1Params::default()).unwrap()
+    fn m() -> ExposureModel {
+        ExposureModel::new(ExposureParams::default()).unwrap()
     }
 
-    /// Stage 1 core idea: fouling clock runs while the ship sits in port, practically stops
+    /// Exposure model core idea: fouling clock runs while the ship sits in port, practically stops
     /// at 14 kn offshore, and runs at half speed in 15 °C water (Q10 = 2).
     #[test]
     fn idle_accumulates_sailing_does_not() {
@@ -306,7 +194,7 @@ mod tests {
         s.advance(&berth(10.0, 15.0));
         assert!(close(s.hull_exposure().value(), 15.0, 1e-9)); // Q10 = 2 ⇒ half rate at 15 °C
     }
-    /// Stage 1 penalty grows linearly with exposure (0.0012 per idle day → 19.98% at 166.5 d)
+    /// Exposure model penalty grows linearly with exposure (0.0012 per idle day → 19.98% at 166.5 d)
     /// and saturates at the 86% heavy-calcareous cap (Schultz).
     #[test]
     fn observation_linear_then_capped() {
@@ -327,7 +215,7 @@ mod tests {
         s.advance(&sail(20.0 * 365.25));
         assert_eq!(s.prop_eta_loss(), 0.32);
     }
-    /// What each maintenance event does in Stage 1: in-water clean leaves a 13-day residual
+    /// What each maintenance event does in exposure model: in-water clean leaves a 13-day residual
     /// plus 20% of the excess, grooming leaves only the residual, dry-dock resets everything.
     #[test]
     fn reset_maps() {
@@ -408,32 +296,36 @@ mod tests {
     /// (e.g. a 100% propeller-loss cap, zero settlement width, zero Q10) are rejected up front.
     #[test]
     fn rejects_parameters_that_break_the_power_factor() {
-        let bad =
-            |p: Stage1Params| matches!(Stage1Model::new(p), Err(FoulingError::InvalidParameter(_)));
-        let d = Stage1Params::default();
-        assert!(bad(Stage1Params { prop_cap: 1.0, ..d }));
-        assert!(bad(Stage1Params {
+        let bad = |p: ExposureParams| {
+            matches!(
+                ExposureModel::new(p),
+                Err(FoulingError::InvalidParameter(_))
+            )
+        };
+        let d = ExposureParams::default();
+        assert!(bad(ExposureParams { prop_cap: 1.0, ..d }));
+        assert!(bad(ExposureParams {
             gate: GateParams {
                 settle_width: Knots(0.0),
                 ..d.gate
             },
             ..d
         }));
-        assert!(bad(Stage1Params {
+        assert!(bad(ExposureParams {
             gate: GateParams {
                 sailing_fraction: 1.5,
                 ..d.gate
             },
             ..d
         }));
-        assert!(bad(Stage1Params {
+        assert!(bad(ExposureParams {
             temperature: TemperatureResponse {
                 q10: 0.0,
                 ..d.temperature
             },
             ..d
         }));
-        assert!(bad(Stage1Params {
+        assert!(bad(ExposureParams {
             spot_repair_recovery: 2.0,
             ..d
         }));
@@ -442,11 +334,11 @@ mod tests {
             half_at: Psu(5.0),
             full_at: Psu(2.0),
         };
-        assert!(bad(Stage1Params {
+        assert!(bad(ExposureParams {
             salinity: inverted,
             ..d
         }));
-        assert!(Stage1Model::new(d).is_ok());
+        assert!(ExposureModel::new(d).is_ok());
     }
     /// A spot-repair docking recorded twice (duplicate record, no time at sea in between)
     /// counts once: AHR 160 → 140, not 140 → 130. A later docking applies again.
@@ -461,26 +353,26 @@ mod tests {
         s.apply(MaintenanceEvent::DryDockSpotRepair);
         assert!(close(s.ahr().value(), 140.0, 1e-9));
     }
-    /// Stage 1 with growth while sailing (δ = 0.2): 100 days at 14 kn far offshore adds
+    /// Exposure model with growth while sailing (δ = 0.2): 100 days at 14 kn far offshore adds
     /// ≈ 20 exposure days instead of ≈ 0.
     #[test]
-    fn sailing_fraction_drives_stage1_clock() {
-        let p = Stage1Params {
+    fn sailing_fraction_drives_exposure_clock() {
+        let p = ExposureParams {
             gate: GateParams {
                 sailing_fraction: 0.2,
                 ..GateParams::default()
             },
-            ..Stage1Params::default()
+            ..ExposureParams::default()
         };
-        let mut s = Stage1Model::new(p).unwrap();
+        let mut s = ExposureModel::new(p).unwrap();
         s.advance(&sail(100.0));
         assert!(close(s.hull_exposure().value(), 20.0, 1e-6));
     }
-    /// Every numeric Stage 1 parameter rejects NaN and negative values.
+    /// Every numeric exposure model parameter rejects NaN and negative values.
     #[test]
     fn every_parameter_rejects_nan_and_negative() {
-        let d = Stage1Params::default();
-        type Set = fn(&mut Stage1Params, f64);
+        let d = ExposureParams::default();
+        type Set = fn(&mut ExposureParams, f64);
         let setters: [(&str, Set); 11] = [
             ("slope", |p, v| p.slope_per_day = v),
             ("hull_cap", |p, v| p.hull_cap = v),
@@ -505,12 +397,15 @@ mod tests {
                 let mut p = d;
                 set(&mut p, v);
                 assert!(
-                    matches!(Stage1Model::new(p), Err(FoulingError::InvalidParameter(_))),
+                    matches!(
+                        ExposureModel::new(p),
+                        Err(FoulingError::InvalidParameter(_))
+                    ),
                     "{name} = {v}"
                 );
             }
         }
-        let far_inside = Stage1Params {
+        let far_inside = ExposureParams {
             gate: GateParams {
                 near_coast: Kilometres(200.0),
                 ..d.gate
@@ -518,7 +413,7 @@ mod tests {
             ..d
         };
         assert!(
-            Stage1Model::new(far_inside).is_err(),
+            ExposureModel::new(far_inside).is_err(),
             "near_coast beyond far_coast"
         );
     }

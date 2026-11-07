@@ -147,7 +147,7 @@ fn hull_penalty_linear_in_frictional_share() {
 
 fn clean_days(policy: CleaningPolicy) -> Vec<f64> {
     let traj =
-        with_tanker(|op| simulate(&mut stage1(), &glofouling_profile(5.0, 25.0), policy, op));
+        with_tanker(|op| simulate(&mut exposure(), &glofouling_profile(5.0, 25.0), policy, op));
     traj.iter()
         .filter(|p| matches!(p.event, Some(MaintenanceEvent::InWaterHullClean { .. })))
         .map(|p| p.elapsed.value())
@@ -200,7 +200,7 @@ fn uneven_random_splits_give_identical_state() {
         cuts.push(0.0);
         cuts.push(total);
         cuts.sort_by(f64::total_cmp);
-        let (mut w1, mut w2, mut p1, mut p2) = (stage1(), stage2(), stage1(), stage2());
+        let (mut w1, mut w2, mut p1, mut p2) = (exposure(), age_clock(), exposure(), age_clock());
         w1.advance(&seg);
         w2.advance(&seg);
         for w in cuts.windows(2) {
@@ -231,14 +231,14 @@ fn uneven_random_splits_give_identical_state() {
 }
 
 /// 20,000 random segments with maintenance events mixed in (about 1 in 20), both stages.
-/// After every step: every penalty finite and non-negative, power factor ≥ 1, Stage 1
-/// within its caps, Stage 2 ratings within class maxima and coverage within [0, 100],
+/// After every step: every penalty finite and non-negative, power factor ≥ 1, exposure model
+/// within its caps, age-clock model ratings within class maxima and coverage within [0, 100],
 /// and no event ever makes the hull or propeller rougher.
 #[test]
 fn long_random_history_keeps_invariants() {
     let mut rng = Rng(106);
     with_tanker(|op| {
-        let (mut s1, mut s2) = (stage1(), stage2());
+        let (mut s1, mut s2) = (exposure(), age_clock());
         for step in 0..20_000 {
             if rng.index(20) == 0 {
                 let event = match rng.index(5) {

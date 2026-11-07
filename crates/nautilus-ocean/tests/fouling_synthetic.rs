@@ -9,9 +9,9 @@ use nautilus_ocean::fouling::environment::{
 use nautilus_ocean::fouling::events::MaintenanceEvent;
 use nautilus_ocean::fouling::granville::{GranvilleTable, delta_cf_ratio_direct};
 use nautilus_ocean::fouling::power::{ShipParticulars, reynolds};
-use nautilus_ocean::fouling::stage1::{Stage1Model, Stage1Params};
-use nautilus_ocean::fouling::stage2::{Stage2Model, Stage2Params};
 use nautilus_ocean::fouling::uzun::{EQ_CALCAREOUS, EQ_FAST_ASYM, EQ_MAIN_ASYM, EQ_SLIME, EQ_SOFT};
+use nautilus_ocean::fouling::{age_clock_model::AgeClockModel, params::AgeClockParams};
+use nautilus_ocean::fouling::{exposure_model::ExposureModel, params::ExposureParams};
 use nautilus_units::{Celsius, Days, Kilometres, Knots, Metres, Micrometres, Psu};
 
 /// SplitMix64 — deterministic, seedable. Each test fixes its own seed.
@@ -91,11 +91,11 @@ fn rel_close(a: f64, b: f64, tol: f64) -> bool {
     (a - b).abs() <= tol * a.abs().max(b.abs()) + 1e-12
 }
 
-fn stage1() -> Stage1Model {
-    Stage1Model::new(Stage1Params::default()).unwrap()
+fn exposure() -> ExposureModel {
+    ExposureModel::new(ExposureParams::default()).unwrap()
 }
-fn stage2() -> Stage2Model {
-    Stage2Model::new(Stage2Params::default()).unwrap()
+fn age_clock() -> AgeClockModel {
+    AgeClockModel::new(AgeClockParams::default()).unwrap()
 }
 
 fn with_op<R>(f: impl FnOnce(&OperatingPoint) -> R) -> R {
@@ -106,22 +106,22 @@ fn with_op<R>(f: impl FnOnce(&OperatingPoint) -> R) -> R {
     f(&OperatingPoint::new(&ship, Knots(14.0), &table).unwrap())
 }
 
-fn stage1_rate(seg: &Segment) -> f64 {
-    let p = Stage1Params::default();
+fn exposure_rate(seg: &Segment) -> f64 {
+    let p = ExposureParams::default();
     p.temperature.factor(seg.sst()) * p.salinity.factor(seg.salinity()) * p.gate.gate(seg)
 }
 
-/// Stage 1's exposure after 200 random segments equals the sum of rate × duration computed
+/// Exposure model's exposure after 200 random segments equals the sum of rate × duration computed
 /// in the test from the public response functions. Oracle: independent re-computation.
 #[test]
-fn stage1_exposure_equals_hand_sum() {
+fn exposure_exposure_equals_hand_sum() {
     let mut rng = Rng(1);
     let segs: Vec<Segment> = (0..N).map(|_| random_segment(&mut rng)).collect();
-    let mut m = stage1();
+    let mut m = exposure();
     segs.iter().for_each(|s| m.advance(s));
     let expected: f64 = segs
         .iter()
-        .map(|s| stage1_rate(s) * s.duration().value())
+        .map(|s| exposure_rate(s) * s.duration().value())
         .sum();
     assert!(
         rel_close(m.hull_exposure().value(), expected, 1e-9),
@@ -130,9 +130,9 @@ fn stage1_exposure_equals_hand_sum() {
     );
 }
 
-/// Shuffling the order of segments does not change Stage 1's exposure (it is a sum).
+/// Shuffling the order of segments does not change exposure model's exposure (it is a sum).
 #[test]
-fn stage1_exposure_is_order_independent() {
+fn exposure_exposure_is_order_independent() {
     let mut rng = Rng(2);
     let segs: Vec<Segment> = (0..N).map(|_| random_segment(&mut rng)).collect();
     let mut shuffled = segs.clone();
@@ -140,7 +140,7 @@ fn stage1_exposure_is_order_independent() {
         let j = rng.index(i + 1);
         shuffled.swap(i, j);
     }
-    let (mut a, mut b) = (stage1(), stage1());
+    let (mut a, mut b) = (exposure(), exposure());
     segs.iter().for_each(|s| a.advance(s));
     shuffled.iter().for_each(|s| b.advance(s));
     assert!(rel_close(
@@ -157,12 +157,12 @@ fn segment_splitting_invariance_both_stages() {
     let mut rng = Rng(3);
     for _ in 0..N {
         let seg = marine_segment(&mut rng, None);
-        let (mut one1, mut one2) = (stage1(), stage2());
+        let (mut one1, mut one2) = (exposure(), age_clock());
         one1.advance(&seg);
         one2.advance(&seg);
         for k in [2usize, 5, 17] {
             let part = with_duration(&seg, seg.duration().value() / k as f64);
-            let (mut s1, mut s2) = (stage1(), stage2());
+            let (mut s1, mut s2) = (exposure(), age_clock());
             for _ in 0..k {
                 s1.advance(&part);
                 s2.advance(&part);
@@ -207,14 +207,14 @@ fn idle(days: f64, t: f64, s: f64) -> Segment {
     .unwrap()
 }
 
-/// At any temperature 12–32 °C, d days of Stage 2 growth equals d × Q10^((T−25)/10) days
+/// At any temperature 12–32 °C, d days of age-clock model growth equals d × Q10^((T−25)/10) days
 /// on Uzun's equatorial curve. Oracle: the Q10 law applied to the published curve.
 #[test]
-fn stage2_time_temperature_equivalence() {
+fn age_clock_time_temperature_equivalence() {
     let mut rng = Rng(4);
     for _ in 0..N {
         let (t, d) = (rng.uniform(12.0, 32.0), rng.uniform(1.0, 800.0));
-        let mut m = stage2();
+        let mut m = age_clock();
         m.advance(&idle(d, t, 35.0));
         let slime = EQ_SLIME.rating(d * 4.1554_f64.powf((t - 25.0) / 10.0));
         let soft = EQ_SOFT.rating(d * 1.5406_f64.powf((t - 25.0) / 10.0));
@@ -230,7 +230,7 @@ fn penalties_monotone_without_events() {
     with_op(|op| {
         for _ in 0..20 {
             let sst = rng.uniform(-2.0, 34.0);
-            let (mut s1, mut s2) = (stage1(), stage2());
+            let (mut s1, mut s2) = (exposure(), age_clock());
             let (mut prev1, mut prev2) = (1.0_f64, 1.0_f64);
             for i in 0..N {
                 let seg = marine_segment(&mut rng, Some(sst));
@@ -242,11 +242,11 @@ fn penalties_monotone_without_events() {
                 );
                 assert!(
                     p1 >= prev1 - 1e-12,
-                    "stage1 SST={sst} step {i}: {p1} < {prev1}"
+                    "exposure SST={sst} step {i}: {p1} < {prev1}"
                 );
                 assert!(
                     p2 >= prev2 - 1e-12,
-                    "stage2 SST={sst} step {i}: {p2} < {prev2}"
+                    "age_clock SST={sst} step {i}: {p2} < {prev2}"
                 );
                 (prev1, prev2) = (p1, p2);
             }
@@ -260,7 +260,7 @@ fn warmer_never_fouls_less() {
     let mut rng = Rng(6);
     for _ in 0..N {
         let t = rng.uniform(12.0, 30.0);
-        let (mut cool, mut warm) = (stage2(), stage2());
+        let (mut cool, mut warm) = (age_clock(), age_clock());
         for _ in 0..20 {
             let d = rng.uniform(0.05, 60.0);
             cool.advance(&idle(d, t, 35.0));
@@ -276,7 +276,7 @@ fn warmer_never_fouls_less() {
 fn events_never_increase_fouling_random() {
     let mut rng = Rng(7);
     for _ in 0..N {
-        let (mut s1, mut s2) = (stage1(), stage2());
+        let (mut s1, mut s2) = (exposure(), age_clock());
         for _ in 0..rng.index(60) + 1 {
             let seg = random_segment(&mut rng);
             s1.advance(&seg);
@@ -336,7 +336,7 @@ fn granville_table_accuracy_random() {
 /// A four-leg voyage (hot berth → Panama freshwater → ocean crossing → anchorage) whose
 /// expected ratings and coverage are worked out step by step in the test.
 #[test]
-fn hand_computed_voyage_stage2() {
+fn hand_computed_voyage_age_clock() {
     // Voyage: 120 d berth 28 °C 35 PSU → 0.5 d Panama-like freshwater transit
     // (4 kn, 0.3 PSU, 28 °C) → 30 d sailing 16 kn 300 km offshore 26 °C 35 PSU →
     // 60 d anchorage 22 °C 33 PSU.
@@ -368,7 +368,7 @@ fn hand_computed_voyage_stage2() {
         Kilometres(5.0),
     )
     .unwrap();
-    let mut m = stage2();
+    let mut m = age_clock();
     for s in [&s1, &s2, &s3, &s4] {
         m.advance(s);
     }
@@ -443,7 +443,7 @@ fn hand_computed_voyage_stage2() {
 fn no_nan_under_extremes() {
     let mut rng = Rng(9);
     with_op(|op| {
-        let (mut s1, mut s2) = (stage1(), stage2());
+        let (mut s1, mut s2) = (exposure(), age_clock());
         for _ in 0..N {
             let t = if rng.index(2) == 0 { -2.0 } else { 34.0 };
             let s = if rng.index(2) == 0 { 0.0 } else { 40.0 };

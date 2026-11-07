@@ -36,7 +36,7 @@ as-applied hull**. A freshly docked ship has a multiplier of exactly 1.
 | Propagule `P` | 1 at berth/anchorage; at sea 1 within `near`, linear to `offshore_floor` at `far` |
 | Gate | `x + δ·(1 − x)`, `x = A·P`; δ = 0 matches Uzun (growth only while idle) |
 
-## Stage 1 (`stage1.rs`)
+## Exposure model (`exposure_model.rs`)
 
 One hull clock `E`, plus calendar drifts:
 
@@ -44,7 +44,7 @@ One hull clock `E`, plus calendar drifts:
 - `hull_fouling_fraction = min(0.86, 0.0012·E)`; coating fraction from AHR (below); propeller
   loss = `prop`.
 
-Stage 1 has a single clock, so it has no freshwater cull. Freshwater only pauses the clock
+Exposure model has a single clock, so it has no freshwater cull. Freshwater only pauses the clock
 (S = 0).
 
 | Event | E | AHR | prop |
@@ -55,9 +55,9 @@ Stage 1 has a single clock, so it has no freshwater cull. Freshwater only pauses
 | HullGrooming | `min(E, E_res)` | — | — |
 | PropellerPolish | — | — | 0 |
 
-## Stage 2 (`stage2.rs`, `uzun.rs`)
+## Age-clock model (`age_clock_model.rs`, `uzun.rs`)
 
-This stage uses the Uzun et al. (2019) equatorial curves for a self-polishing (SPC) coating,
+This model uses the Uzun et al. (2019) equatorial curves for a self-polishing (SPC) coating,
 rewritten as **age clocks**. A Gaussian rise in age, `FR = max·exp(−((A − t0)/τ)²)`, solves
 the square-root-Gompertz ODE `dFR/dA = (2/τ)·FR·√ln(max/FR)`. The curve can therefore be
 driven by a clock that runs faster or slower than calendar time, and it reproduces the
@@ -123,7 +123,7 @@ FR 0.75 corresponds to k_s ≈ 40 µm, GloFouling's post-cleaning floor.
 
 `mean_power_factor` weights each segment by the penalty at its end, and `simulate` checks
 cleaning triggers only at segment ends. Results are accurate only when segments are short
-relative to how fast fouling changes (days, not weeks). For example, Stage 1 at berth for 1000
+relative to how fast fouling changes (days, not weeks). For example, the exposure model at berth for 1000
 days gives a mean power factor of 2.20 as one segment and 1.73 as 1000 one-day segments. Split
 long segments (for example, multi-week AIS berth stays) before simulating.
 
@@ -132,18 +132,18 @@ long segments (for example, multi-week AIS berth stays) before simulating.
 | Parameter | Value | Source | Assumption — calibrate? |
 |---|---|---|---|
 | Reference temperature | 25 °C | Uzun equatorial site (per GloFouling) | |
-| Q10 Stage 1 | 2.0 | spec | yes |
+| Q10 the exposure model | 2.0 | spec | yes |
 | T floor / t_min / t_max | 0.1 / 12 °C / 32 °C | spec | yes — the factor jumps at `t_min` (0.1 → 0.41 for Q10 2) by design |
 | Euryhaline salinity (0 / 0.5 / 1) | 2 / 5 / 20 PSU | spec | yes |
 | Stenohaline salinity | 10 / 17.5 / 25 PSU | spec (soft drop-out 10–25 PSU) | yes |
 | Settlement v50 / width | 1.25 kn / 0.2547 kn | spec | |
 | Propagule near / far / floor | 15 km / 100 km / 0.02 | spec | yes |
 | Sailing fraction δ | 0 | Uzun-compatible | yes (open item 8) |
-| Stage 1 slope | 0.0012 per exposure day (±50%) | derived from GloFouling | yes |
-| Stage 1 hull cap | 0.86 | Schultz heavy calcareous | |
+| Exposure model slope | 0.0012 per exposure day (±50%) | derived from GloFouling | yes |
+| Exposure model hull cap | 0.86 | Schultz heavy calcareous | |
 | AHR out-docking | 120 µm | spec | |
 | AHR drift | 20 µm/yr (range 3–40) | spec | yes |
-| Stage 1 propeller drift / cap | 0.026/yr / 0.32 | van Ballegooijen via GloFouling | |
+| Exposure model propeller drift / cap | 0.026/yr / 0.32 | van Ballegooijen via GloFouling | |
 | Residual exposure | 13 d (≈ +1.6% at 40 µm, tanker) | derived | yes |
 | Spot-repair recovery | 0.5 | spec | yes |
 | Slime / soft / calcareous Q10 | 4.1554 / 1.5406 / 2.0417 | fitted to Uzun's two sites | site SSTs: open item 2 |
@@ -175,8 +175,8 @@ for the GloFouling equatorial profile (176 m tanker, frictional share 0.5, 14 kn
 
 | | none | reactive | proactive |
 |---|---|---|---|
-| Stage 1 | 1.513 | 1.229 | 1.101 |
-| Stage 2 | 1.736 | 1.304 | 1.152 |
+| Exposure model | 1.513 | 1.229 | 1.101 |
+| Age-clock model | 1.736 | 1.304 | 1.152 |
 
 This profile is the GloFouling worst case: 25 °C all year and 30% idle time. It is not a fleet
 average.

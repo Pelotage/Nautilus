@@ -6,8 +6,8 @@ use nautilus_ocean::fouling::environment::{PortStatus, Segment};
 use nautilus_ocean::fouling::granville::GranvilleTable;
 use nautilus_ocean::fouling::power::ShipParticulars;
 use nautilus_ocean::fouling::simulate::TimelineItem;
-use nautilus_ocean::fouling::stage1::{Stage1Model, Stage1Params};
-use nautilus_ocean::fouling::stage2::{Stage2Model, Stage2Params};
+use nautilus_ocean::fouling::{age_clock_model::AgeClockModel, params::AgeClockParams};
+use nautilus_ocean::fouling::{exposure_model::ExposureModel, params::ExposureParams};
 use nautilus_units::{Celsius, Days, Kilometres, Knots, Metres, Psu};
 
 /// SplitMix64 — deterministic, seedable random numbers (no external crates).
@@ -33,11 +33,11 @@ pub fn rel_close(a: f64, b: f64, tol: f64) -> bool {
     (a - b).abs() <= tol * a.abs().max(b.abs()) + 1e-12
 }
 
-pub fn stage1() -> Stage1Model {
-    Stage1Model::new(Stage1Params::default()).unwrap()
+pub fn exposure() -> ExposureModel {
+    ExposureModel::new(ExposureParams::default()).unwrap()
 }
-pub fn stage2() -> Stage2Model {
-    Stage2Model::new(Stage2Params::default()).unwrap()
+pub fn age_clock() -> AgeClockModel {
+    AgeClockModel::new(AgeClockParams::default()).unwrap()
 }
 
 pub fn idle(days: f64, t: f64, s: f64) -> Segment {
