@@ -161,7 +161,7 @@ for the GloFouling equatorial profile (176 m tanker, frictional share 0.5, 14 kn
 | | none | reactive | proactive |
 |---|---|---|---|
 | Stage 1 | 1.513 | 1.229 | 1.101 |
-| Stage 2 | 1.738 | 1.306 | 1.152 |
+| Stage 2 | 1.736 | 1.304 | 1.152 |
 
 This profile is the GloFouling worst case: 25 °C all year and 30% idle time. It is not a fleet
 average.
