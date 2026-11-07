@@ -9,8 +9,6 @@
 //!
 //! Steps are fixed: a segment of length Δ takes `max(1, ⌈Δ/0.25⌉)` equal steps. There are no
 //! tolerance loops, so results are deterministic.
-// TEMP(Task 7): remove once GuildModel drives the solver.
-#![allow(dead_code)]
 
 /// Largest step, in days.
 pub(crate) const MAX_STEP_DAYS: f64 = 0.25;

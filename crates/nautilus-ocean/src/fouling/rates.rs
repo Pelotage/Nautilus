@@ -90,8 +90,6 @@ pub fn calcareous_capacity(p: &GuildParams, t: Celsius) -> f64 {
 
 /// Constant rates of one segment, indexed `[class][guild]` (class: slime, soft,
 /// calcareous; guild: warm, cold).
-// TEMP(Task 7): remove once GuildModel uses SegmentRates.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct SegmentRates {
     /// Settlement: gate × thermal settlement rate × breeding × salinity × food.
@@ -106,8 +104,6 @@ pub(crate) struct SegmentRates {
     pub weathering: f64,
 }
 
-// TEMP(Task 7): remove once GuildModel uses SegmentRates.
-#[allow(dead_code)]
 impl SegmentRates {
     /// Evaluates every rate for the segment's environment.
     pub(crate) fn new(seg: &Segment, p: &GuildParams) -> SegmentRates {

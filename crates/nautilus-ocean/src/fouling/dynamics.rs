@@ -1,7 +1,5 @@
 //! Right-hand side of the guild model (spec Section 5.2): gains (settlement and growth)
 //! and linear losses (mortality, detachment, weathering) for the state vector.
-// TEMP(Task 7): remove once GuildModel uses the dynamics.
-#![allow(dead_code)]
 
 use super::integrate::LinearLoss;
 pub(crate) use super::rates::SegmentRates;

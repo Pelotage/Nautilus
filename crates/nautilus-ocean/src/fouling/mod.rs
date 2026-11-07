@@ -1,16 +1,25 @@
 //! Hull and propeller biofouling dynamics.
 //!
-//! The model is a hybrid (impulsive) dynamical system. Between maintenance
-//! events the fouling state grows continuously on *exposure clocks*: clocks that
-//! advance at a rate set by sea temperature, salinity, ship speed and distance to
-//! coast rather than by calendar time. Maintenance events (dry-docking, in-water
-//! cleaning, grooming, propeller polishing) are jumps that reset parts of the state,
-//! each leaving a residual.
+//! Every model here is a hybrid (impulsive) dynamical system. Between maintenance
+//! events the fouling state evolves continuously under the segment's environment (sea
+//! temperature, salinity, chlorophyll, ship speed, port status, distance to coast).
+//! Maintenance events (dry-docking, in-water cleaning, grooming, propeller polishing) are
+//! jumps that reset parts of the state, each leaving a residual. All three models implement
+//! [`FoulingModel`], so [`simulate::simulate`], the cleaning policies and the power chain
+//! work with any of them.
 //!
-//! Forcing is piecewise constant per [`environment::Segment`], so every update is
-//! closed form; no ODE solver is involved and runs are fully deterministic.
+//! | Model | State | Use it for |
+//! |---|---|---|
+//! | [`exposure_model::ExposureModel`] | one hull exposure clock | quick estimates; GloFouling-style trigger points |
+//! | [`age_clock_model::AgeClockModel`] | Uzun 2019 age clocks per fouling class | the published Uzun baseline at a fixed climate |
+//! | [`guild_model::GuildModel`] | warm and cold guild fouling amounts, dead shells | routes that cross climates, fresh or brackish water |
 //!
-//! Spec: `research/reports/Biofouling growth dynamical model.md`.
+//! The exposure and age-clock models are closed form per segment. The guild model is
+//! integrated with a fixed-step integrating-factor RK4 (`integrate.rs`). All runs are
+//! deterministic.
+//!
+//! Spec: `research/reports/Biofouling growth dynamical model.md`; guild model:
+//! `docs/superpowers/specs/2026-11-07-fouling-guild-model-design.md`.
 //!
 //! # Example
 //!
@@ -50,6 +59,7 @@ pub mod environment;
 pub mod events;
 pub mod exposure_model;
 pub mod granville;
+pub mod guild_model;
 pub(crate) mod integrate;
 pub mod params;
 pub mod power;
