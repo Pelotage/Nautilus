@@ -17,8 +17,23 @@ use std::fmt;
 use nautilus_units::Knots;
 
 pub mod environment;
+pub mod events;
 pub mod granville;
 pub mod power;
+pub mod stage1;
+
+/// A fouling model: continuous growth along segments, jumps at events, and an
+/// observation that turns the state into a power penalty.
+pub trait FoulingModel {
+    /// Advances the state through one segment of constant forcing. A
+    /// zero-duration segment is a no-op.
+    fn advance(&mut self, seg: &environment::Segment);
+    /// Applies a maintenance event. Events never increase fouling.
+    fn apply(&mut self, event: events::MaintenanceEvent);
+    /// Power penalty of the current state at an operating point, relative to
+    /// the clean as-applied reference.
+    fn power_penalty(&self, op: &OperatingPoint) -> power::PowerPenalty;
+}
 
 /// Where and how fast the ship is operating when a penalty is evaluated.
 #[derive(Debug, Clone, Copy)]
