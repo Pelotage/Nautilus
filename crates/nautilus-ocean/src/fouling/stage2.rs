@@ -24,7 +24,7 @@ use super::events::MaintenanceEvent;
 use super::power::{
     PowerPenalty, coating_resistance_fraction, fouling_resistance_fraction, propeller_eta_loss,
 };
-use super::stage1::{check_non_negative, check_responses};
+use super::stage1::{check_fraction, check_non_negative, check_responses};
 use super::uzun::{self, EQ_CALCAREOUS, EQ_FAST_ASYM, EQ_MAIN_ASYM, EQ_SLIME, EQ_SOFT};
 use super::{FoulingError, FoulingModel, OperatingPoint};
 
@@ -71,9 +71,10 @@ pub struct Stage2Params {
     /// Cold-site fast coverage asymptote (0%). Placeholder from two sites —
     /// assumption — calibrate.
     pub cold_fast_asym: f64,
-    /// Salinity below which a long enough segment culls soft fouling (2 PSU).
+    /// Salinity below which a long enough freshwater stay culls soft fouling (2 PSU).
     pub fresh_threshold: Psu,
-    /// Minimum freshwater duration for a cull (3 h).
+    /// Minimum duration of a freshwater stay (consecutive segments below
+    /// `fresh_threshold`) for its one cull (3 h).
     pub cull_min_duration: Days,
     /// Rating multiplier applied by a freshwater cull (0.5; range 0–0.5).
     /// Assumption — calibrate.
@@ -139,6 +140,7 @@ pub struct Stage2Model {
     calc_wt_sum: f64,
     ahr: f64,
     prop_rough: f64,
+    fresh_stay: f64,
 }
 
 impl Stage2Model {
@@ -170,6 +172,8 @@ impl Stage2Model {
         ] {
             check_non_negative(v, what)?;
         }
+        check_fraction(params.cull_factor, "cull_factor")?;
+        check_fraction(params.spot_repair_recovery, "spot_repair_recovery")?;
         let (cold, warm) = (params.cold_asym_temp.value(), params.warm_asym_temp.value());
         if !(cold.is_finite() && warm.is_finite() && warm > cold) {
             return Err(FoulingError::InvalidParameter("asymptote temperatures"));
@@ -184,6 +188,7 @@ impl Stage2Model {
             calc_wt_sum: 0.0,
             ahr: params.ahr_out_docking.value(),
             prop_rough: params.prop_clean.value(),
+            fresh_stay: 0.0,
         })
     }
 
@@ -199,7 +204,9 @@ impl Stage2Model {
     pub fn calcareous_coverage(&self) -> f64 {
         self.coverage_at(self.a_calc)
     }
-    /// Hull roughness from total rating and calcareous coverage.
+    /// Hull roughness from total rating and calcareous coverage (Uzun scale; a
+    /// freshly docked hull reads slightly above 30 µm because of the curve seeds,
+    /// and the power penalty is taken relative to that docked value).
     pub fn hull_ks(&self) -> Micrometres {
         uzun::hull_ks(
             self.slime_rating() + self.soft_rating(),
@@ -282,14 +289,25 @@ impl FoulingModel for Stage2Model {
         self.prop_rough = (self.prop_rough + p.prop_drift_per_year.value() * dt / DAYS_PER_YEAR)
             .min(p.prop_rough_cap.value());
 
-        // Freshwater cull: kills soft fouling; dead calcareous shells stay.
-        if s.value() < p.fresh_threshold.value() && dt >= p.cull_min_duration.value() {
-            self.a_slime = EQ_SLIME
-                .age_for_rating(p.cull_factor * self.slime_rating())
-                .min(self.a_slime);
-            self.a_soft = EQ_SOFT
-                .age_for_rating(p.cull_factor * self.soft_rating())
-                .min(self.a_soft);
+        // Freshwater cull: kills soft fouling; dead calcareous shells stay. It fires
+        // once per freshwater stay (consecutive segments below the threshold),
+        // when the stay first reaches `cull_min_duration`, so the result does not
+        // depend on how the stay is split into segments.
+        if s.value() < p.fresh_threshold.value() {
+            let before = self.fresh_stay;
+            self.fresh_stay += dt;
+            if before < p.cull_min_duration.value()
+                && self.fresh_stay >= p.cull_min_duration.value()
+            {
+                self.a_slime = EQ_SLIME
+                    .age_for_rating(p.cull_factor * self.slime_rating())
+                    .min(self.a_slime);
+                self.a_soft = EQ_SOFT
+                    .age_for_rating(p.cull_factor * self.soft_rating())
+                    .min(self.a_soft);
+            }
+        } else {
+            self.fresh_stay = 0.0;
         }
     }
 
@@ -326,7 +344,14 @@ impl FoulingModel for Stage2Model {
 
     fn power_penalty(&self, op: &OperatingPoint) -> PowerPenalty {
         PowerPenalty {
-            hull_fouling_fraction: fouling_resistance_fraction(op, self.hull_ks()),
+            // Relative to the freshly docked hull: Uzun's Gaussians have non-zero
+            // seeds, so a docked hull maps to slightly above the 30 µm reference.
+            hull_fouling_fraction: (fouling_resistance_fraction(op, self.hull_ks())
+                - fouling_resistance_fraction(
+                    op,
+                    uzun::ks_from_rating(EQ_SLIME.seed() + EQ_SOFT.seed()),
+                ))
+            .max(0.0),
             coating_fraction: coating_resistance_fraction(
                 op,
                 self.params.ahr_out_docking,
@@ -494,5 +519,56 @@ mod tests {
             .power_factor()
             .is_finite()
         );
+    }
+    #[test]
+    fn freshly_docked_has_no_penalty() {
+        let (ship, table) = (
+            ShipParticulars::new(Metres(176.0), 0.5).unwrap(),
+            GranvilleTable::new(),
+        );
+        let op = OperatingPoint {
+            ship: &ship,
+            speed: Knots(14.0),
+            table: &table,
+        };
+        assert_eq!(m().power_penalty(&op).power_factor(), 1.0);
+        let mut s = m();
+        s.advance(&idle(400.0, 25.0, 35.0));
+        s.apply(MaintenanceEvent::DryDockFullBlast);
+        assert_eq!(s.power_penalty(&op).power_factor(), 1.0);
+    }
+    #[test]
+    fn freshwater_cull_independent_of_split() {
+        let mut base = m();
+        base.advance(&idle(500.0, 25.0, 35.0));
+        let soft_after = |pieces: usize| {
+            let mut s = base.clone();
+            for _ in 0..pieces {
+                s.advance(&idle(1.0 / pieces as f64, 25.0, 0.3));
+            }
+            s.soft_rating()
+        };
+        let one = soft_after(1);
+        assert!(close(one, 25.0, 1e-6));
+        for k in [2, 12] {
+            assert!(close(soft_after(k), one, 1e-9), "k={k}: {}", soft_after(k));
+        }
+        // A marine segment ends the stay; the next freshwater stay culls again.
+        let mut s = base.clone();
+        s.advance(&idle(0.5, 25.0, 0.3));
+        s.advance(&idle(0.0, 25.0, 35.0));
+        s.advance(&idle(0.5, 25.0, 0.3));
+        assert!(close(s.soft_rating(), 12.5, 1e-6));
+    }
+    #[test]
+    fn rejects_out_of_range_fractions() {
+        let p = Stage2Params {
+            cull_factor: 1.5,
+            ..Stage2Params::default()
+        };
+        assert!(matches!(
+            Stage2Model::new(p),
+            Err(FoulingError::InvalidParameter(_))
+        ));
     }
 }

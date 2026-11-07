@@ -71,15 +71,34 @@ pub(crate) fn check_non_negative(v: f64, what: &'static str) -> Result<(), Fouli
     }
 }
 
-/// Validates the shared response parameters (all must be finite; rates,
-/// salinities and distances non-negative).
+/// Rejects values outside [0, 1].
+pub(crate) fn check_fraction(v: f64, what: &'static str) -> Result<(), FoulingError> {
+    if (0.0..=1.0).contains(&v) {
+        Ok(())
+    } else {
+        Err(FoulingError::InvalidParameter(what))
+    }
+}
+
+/// Rejects non-finite or non-positive values.
+fn check_positive(v: f64, what: &'static str) -> Result<(), FoulingError> {
+    if v.is_finite() && v > 0.0 {
+        Ok(())
+    } else {
+        Err(FoulingError::InvalidParameter(what))
+    }
+}
+
+/// Validates the shared response parameters: all finite; Q10 and settlement
+/// width positive; salinity breakpoints and coast distances non-negative and
+/// ordered; gate fractions in [0, 1].
 pub(crate) fn check_responses(
     temps: &[TemperatureResponse],
     salinities: &[SalinityResponse],
     gate: &GateParams,
 ) -> Result<(), FoulingError> {
     for t in temps {
-        check_non_negative(t.q10, "temperature.q10")?;
+        check_positive(t.q10, "temperature.q10")?;
         check_non_negative(t.floor, "temperature.floor")?;
         for v in [t.t_ref.value(), t.t_min.value(), t.t_max.value()] {
             if !v.is_finite() {
@@ -88,20 +107,23 @@ pub(crate) fn check_responses(
         }
     }
     for s in salinities {
-        for v in [s.zero_below.value(), s.half_at.value(), s.full_at.value()] {
+        let (z, h, f) = (s.zero_below.value(), s.half_at.value(), s.full_at.value());
+        for v in [z, h, f] {
             check_non_negative(v, "salinity response")?;
         }
+        if !(z <= h && h <= f) {
+            return Err(FoulingError::InvalidParameter("salinity response order"));
+        }
     }
-    for v in [
-        gate.settle_v50.value(),
-        gate.settle_width.value(),
-        gate.near_coast.value(),
-        gate.far_coast.value(),
-        gate.offshore_floor,
-        gate.sailing_fraction,
-    ] {
-        check_non_negative(v, "gate")?;
+    check_non_negative(gate.settle_v50.value(), "gate.settle_v50")?;
+    check_positive(gate.settle_width.value(), "gate.settle_width")?;
+    check_non_negative(gate.near_coast.value(), "gate.near_coast")?;
+    check_non_negative(gate.far_coast.value(), "gate.far_coast")?;
+    if gate.near_coast.value() > gate.far_coast.value() {
+        return Err(FoulingError::InvalidParameter("gate coast distances order"));
     }
+    check_fraction(gate.offshore_floor, "gate.offshore_floor")?;
+    check_fraction(gate.sailing_fraction, "gate.sailing_fraction")?;
     Ok(())
 }
 
@@ -115,8 +137,9 @@ pub struct Stage1Model {
 }
 
 impl Stage1Model {
-    /// Builds a freshly docked model. Rejects non-finite or negative parameters
-    /// with [`FoulingError::InvalidParameter`].
+    /// Builds a freshly docked model. Rejects non-finite or negative parameters,
+    /// fractions outside [0, 1] and `prop_cap ≥ 1` with
+    /// [`FoulingError::InvalidParameter`].
     pub fn new(params: Stage1Params) -> Result<Self, FoulingError> {
         check_responses(&[params.temperature], &[params.salinity], &params.gate)?;
         for (v, what) in [
@@ -130,6 +153,10 @@ impl Stage1Model {
             (params.spot_repair_recovery, "spot_repair_recovery"),
         ] {
             check_non_negative(v, what)?;
+        }
+        check_fraction(params.spot_repair_recovery, "spot_repair_recovery")?;
+        if params.prop_cap >= 1.0 {
+            return Err(FoulingError::InvalidParameter("prop_cap"));
         }
         Ok(Stage1Model {
             params,
@@ -213,11 +240,12 @@ impl FoulingModel for Stage1Model {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fouling::environment::{GateParams, SalinityResponse, TemperatureResponse};
     use crate::fouling::environment::{PortStatus, Segment};
     use crate::fouling::events::MaintenanceEvent;
     use crate::fouling::granville::GranvilleTable;
     use crate::fouling::power::ShipParticulars;
-    use crate::fouling::{FoulingModel, OperatingPoint};
+    use crate::fouling::{FoulingError, FoulingModel, OperatingPoint};
     use nautilus_units::{Celsius, Days, Kilometres, Knots, Metres, Psu};
 
     fn close(a: f64, b: f64, tol: f64) -> bool {
@@ -351,5 +379,47 @@ mod tests {
             table: &table,
         });
         assert_eq!(p.power_factor(), 1.0);
+    }
+    #[test]
+    fn rejects_parameters_that_break_the_power_factor() {
+        let bad =
+            |p: Stage1Params| matches!(Stage1Model::new(p), Err(FoulingError::InvalidParameter(_)));
+        let d = Stage1Params::default();
+        assert!(bad(Stage1Params { prop_cap: 1.0, ..d }));
+        assert!(bad(Stage1Params {
+            gate: GateParams {
+                settle_width: Knots(0.0),
+                ..d.gate
+            },
+            ..d
+        }));
+        assert!(bad(Stage1Params {
+            gate: GateParams {
+                sailing_fraction: 1.5,
+                ..d.gate
+            },
+            ..d
+        }));
+        assert!(bad(Stage1Params {
+            temperature: TemperatureResponse {
+                q10: 0.0,
+                ..d.temperature
+            },
+            ..d
+        }));
+        assert!(bad(Stage1Params {
+            spot_repair_recovery: 2.0,
+            ..d
+        }));
+        let inverted = SalinityResponse {
+            zero_below: Psu(20.0),
+            half_at: Psu(5.0),
+            full_at: Psu(2.0),
+        };
+        assert!(bad(Stage1Params {
+            salinity: inverted,
+            ..d
+        }));
+        assert!(Stage1Model::new(d).is_ok());
     }
 }

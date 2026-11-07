@@ -138,6 +138,11 @@ pub fn simulate<M: FoulingModel>(
 
 /// Duration-weighted mean power factor over segment points (event points have
 /// zero weight). 1.0 for an empty or zero-duration trajectory.
+///
+/// Each segment is weighted by the penalty at its *end*, and [`simulate`]
+/// checks policy triggers only at segment ends. Both are accurate only when
+/// segments are short relative to how fast fouling changes (days, not weeks):
+/// split long segments before simulating.
 pub fn mean_power_factor(trajectory: &[TrajectoryPoint]) -> f64 {
     let (mut weighted, mut total) = (0.0, 0.0);
     for p in trajectory {

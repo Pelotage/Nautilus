@@ -68,12 +68,16 @@ published curve exactly at 25 °C, full salinity, idle.
 - Calcareous coverage `SC` = main + fast logistic in `a_calc`. Its asymptotes depend on the
   exposure-weighted mean SST, linear between 17 °C (main 50%, fast 0%) and 25 °C (96.899%,
   3.5%), clamped.
-- **Freshwater cull:** a segment with salinity < 2 PSU and duration ≥ 3 h multiplies the slime
-  and soft ratings by 0.5, written back as clock values via the closed-form inverse. Dead
-  calcareous shells stay.
+- **Freshwater cull:** a freshwater *stay* (consecutive segments below 2 PSU) multiplies the
+  slime and soft ratings by 0.5 once, when the stay first reaches 3 h, written back as clock
+  values via the closed-form inverse. Because it acts per stay rather than per segment, the
+  result does not depend on how the stay is split. Dead calcareous shells stay.
 - Observation chain: `FR_tot = FR_slime + FR_soft` → `k_s` (Uzun Eq. 17); `SC` → `k_s`
   (Eq. 18, applies above 5%); hull `k_s` = the larger of the two → Granville `ΔC_F/C_F`.
   Propeller `k_p = max(drift roughness, k_s(SC_prop))` → Δη₀ table.
+- The hull fouling fraction is taken relative to the freshly docked hull. Uzun's Gaussians
+  have non-zero seeds, so a docked hull reads k_s ≈ 31 µm, not 30 µm; the penalty subtracts
+  that docked value so a docked ship has a power factor of exactly 1.
 - Foul-release coatings are refused (`UnsupportedCoating`). The Uzun parameters are SPC-only.
 
 | Event | slime / soft | a_calc | coating | propeller |
@@ -99,6 +103,14 @@ FR 0.75 corresponds to k_s ≈ 40 µm, GloFouling's post-cleaning floor.
   measured from the as-applied reference.
 - Coating fraction = `share · 0.044·((AHR/L)^(1/3) − (AHR_out/L)^(1/3)) / C_F`. This is the
   difference of two ITTC roughness allowances, so it is relative to the out-docking AHR.
+
+## Segmentation
+
+`mean_power_factor` weights each segment by the penalty at its end, and `simulate` checks
+cleaning triggers only at segment ends. Results are accurate only when segments are short
+relative to how fast fouling changes (days, not weeks). For example, Stage 1 at berth for 1000
+days gives a mean power factor of 2.20 as one segment and 1.73 as 1000 one-day segments. Split
+long segments (for example, multi-week AIS berth stays) before simulating.
 
 ## Parameters
 
