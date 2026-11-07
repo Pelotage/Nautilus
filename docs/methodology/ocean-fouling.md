@@ -1,0 +1,173 @@
+# Ocean: hull and propeller biofouling model
+
+Code: `crates/nautilus-ocean/src/fouling/`. Spec: `research/reports/Biofouling growth dynamical model.md`.
+Plan: `plans/0002-biofouling-dynamics-core.md`.
+
+## What it computes
+
+Given a ship's timeline (segments of constant forcing, plus maintenance events), the model
+tracks a fouling state and turns it into a **shaft-power multiplier relative to the clean,
+as-applied hull**. A freshly docked ship has a multiplier of exactly 1.
+
+## Formulation: a hybrid (impulsive) dynamical system
+
+- **Flow.** Between events, the state grows on *exposure clocks*. A clock does not count
+  calendar time. It counts time weighted by how favourable conditions are for fouling:
+  `dE = T(sst) · S(salinity) · gate(speed, port, distance to coast) · Δt`.
+  Forcing is piecewise constant per `Segment`, so each update is closed form. There is no ODE
+  solver, and a segment split into equal parts gives the same state as the whole segment
+  (tested).
+- **Jumps.** `MaintenanceEvent`s map the state to a new state. Every reset leaves a residual,
+  no event ever increases fouling, and dry-docking twice in a row has the same effect as once
+  (tested).
+- **Observation.** The state maps to a `PowerPenalty { hull_fouling_fraction, coating_fraction,
+  propeller_eta_loss }`, and then to
+  `power_factor = (1 + r)·(1 + 0.1·r) / (1 − Δη₀/η₀)` with `r` = hull fouling + coating
+  resistance fraction. The `0.1·r` propeller-loading term is back-calculated from Schultz (86%
+  power vs 80% resistance). It is not a published coefficient.
+
+### Shared response functions (`environment.rs`)
+
+| Function | Form |
+|---|---|
+| Temperature `T` | `max(floor, Q10^((min(t, t_max) − 25)/10))`; `floor` below `t_min` |
+| Salinity `S` | piecewise linear: 0 below `zero_below`, 0.5 at `half_at`, 1 at and above `full_at` |
+| Settlement `A(v)` | `L(v)/L(0)`, `L(v) = 1/(1 + exp((v − v50)/width))` |
+| Propagule `P` | 1 at berth/anchorage; at sea 1 within `near`, linear to `offshore_floor` at `far` |
+| Gate | `x + δ·(1 − x)`, `x = A·P`; δ = 0 matches Uzun (growth only while idle) |
+
+## Stage 1 (`stage1.rs`)
+
+One hull clock `E`, plus calendar drifts:
+
+- `E += T·S·gate·Δ`, `AHR += drift·Δ/365.25`, `prop = min(cap, prop + drift·Δ/365.25)`
+- `hull_fouling_fraction = min(0.86, 0.0012·E)`; coating fraction from AHR (below); propeller
+  loss = `prop`.
+
+Stage 1 has a single clock, so it has no freshwater cull. Freshwater only pauses the clock
+(S = 0).
+
+| Event | E | AHR | prop |
+|---|---|---|---|
+| DryDockFullBlast | 0 | out-docking | 0 |
+| DryDockSpotRepair | 0 | `AHR − recovery·(AHR − out)` | 0 |
+| InWaterHullClean{ρ} | `min(E, E_res + ρ·(E − E_res))` | — | — |
+| HullGrooming | `min(E, E_res)` | — | — |
+| PropellerPolish | — | — | 0 |
+
+## Stage 2 (`stage2.rs`, `uzun.rs`)
+
+This stage uses the Uzun et al. (2019) equatorial curves for a self-polishing (SPC) coating,
+rewritten as **age clocks**. A Gaussian rise in age, `FR = max·exp(−((A − t0)/τ)²)`, solves
+the square-root-Gompertz ODE `dFR/dA = (2/τ)·FR·√ln(max/FR)`. The curve can therefore be
+driven by a clock that runs faster or slower than calendar time, and it reproduces the
+published curve exactly at 25 °C, full salinity, idle.
+
+- Clocks (days at 25 °C): `a_slime += T_slime·S_soft·g·Δ`, `a_soft += T_soft·S_soft·g·Δ`,
+  `a_calc += T_calc·S_hard·g·Δ` (same for the propeller calcareous clock).
+- Calcareous coverage `SC` = main + fast logistic in `a_calc`. Its asymptotes depend on the
+  exposure-weighted mean SST, linear between 17 °C (main 50%, fast 0%) and 25 °C (96.899%,
+  3.5%), clamped.
+- **Freshwater cull:** a segment with salinity < 2 PSU and duration ≥ 3 h multiplies the slime
+  and soft ratings by 0.5, written back as clock values via the closed-form inverse. Dead
+  calcareous shells stay.
+- Observation chain: `FR_tot = FR_slime + FR_soft` → `k_s` (Uzun Eq. 17); `SC` → `k_s`
+  (Eq. 18, applies above 5%); hull `k_s` = the larger of the two → Granville `ΔC_F/C_F`.
+  Propeller `k_p = max(drift roughness, k_s(SC_prop))` → Δη₀ table.
+- Foul-release coatings are refused (`UnsupportedCoating`). The Uzun parameters are SPC-only.
+
+| Event | slime / soft | a_calc | coating | propeller |
+|---|---|---|---|---|
+| DryDockFullBlast | 0 / 0 | 0 (and SST accumulators) | AHR ← out | rough ← 30 µm, a_prop_calc ← 0 |
+| DryDockSpotRepair | 0 / 0 | 0 (and SST accumulators) | partial recovery | as full blast |
+| InWaterHullClean{ρ} | slime ← min(a, age(FR 0.75)); soft ← 0 | age at `ρ·SC` | — | — |
+| HullGrooming | as in-water clean | 0 | — | — |
+| PropellerPolish | — | — | — | rough ← min(rough, 40 µm), a_prop_calc ← 0 |
+
+FR 0.75 corresponds to k_s ≈ 40 µm, GloFouling's post-cleaning floor.
+
+## Roughness → resistance (`granville.rs`, `power.rs`)
+
+- Granville similarity law with the **Nikuradse-type** roughness function, κ = 0.42, against the
+  Schoenherr line. All solvers are 64-step bisections, so results are deterministic. The
+  Schultz/Uzun `k_s` scale is tied to this function. A Colebrook-type function would give
+  +27% at 30 µm.
+- `GranvilleTable`: 32 × 48 grid over log10 Re ∈ [7, 10] and log10(k_s/L) ∈ [−8, −3], bilinear,
+  clamped at the edges (never extrapolated). Random-point accuracy vs the direct solver is
+  within 0.6 percentage points (tested). The grid is solved once per process.
+- Hull fouling fraction = `frictional_share · max(0, G(k_s) − G(30 µm))`. The penalty is
+  measured from the as-applied reference.
+- Coating fraction = `share · 0.044·((AHR/L)^(1/3) − (AHR_out/L)^(1/3)) / C_F`. This is the
+  difference of two ITTC roughness allowances, so it is relative to the out-docking AHR.
+
+## Parameters
+
+| Parameter | Value | Source | Assumption — calibrate? |
+|---|---|---|---|
+| Reference temperature | 25 °C | Uzun equatorial site (per GloFouling) | |
+| Q10 Stage 1 | 2.0 | spec | yes |
+| T floor / t_min / t_max | 0.1 / 12 °C / 32 °C | spec | yes |
+| Euryhaline salinity (0 / 0.5 / 1) | 2 / 5 / 20 PSU | spec | yes |
+| Stenohaline salinity | 10 / 17.5 / 25 PSU | spec (soft drop-out 10–25 PSU) | yes |
+| Settlement v50 / width | 1.25 kn / 0.2547 kn | spec | |
+| Propagule near / far / floor | 15 km / 100 km / 0.02 | spec | yes |
+| Sailing fraction δ | 0 | Uzun-compatible | yes (open item 8) |
+| Stage 1 slope | 0.0012 per exposure day (±50%) | derived from GloFouling | yes |
+| Stage 1 hull cap | 0.86 | Schultz heavy calcareous | |
+| AHR out-docking | 120 µm | spec | |
+| AHR drift | 20 µm/yr (range 3–40) | spec | yes |
+| Stage 1 propeller drift / cap | 0.026/yr / 0.32 | van Ballegooijen via GloFouling | |
+| Residual exposure | 13 d (≈ +1.6% at 40 µm, tanker) | derived | yes |
+| Spot-repair recovery | 0.5 | spec | yes |
+| Slime / soft / calcareous Q10 | 4.1554 / 1.5406 / 2.0417 | fitted to Uzun's two sites | site SSTs: open item 2 |
+| Cold asymptotes (main / fast) | 50% / 0% | two-site placeholder | yes |
+| Fresh threshold / min duration / cull | 2 PSU / 3 h / 0.5 (range 0–0.5) | spec | yes |
+| Propeller clean / polished / drift / cap | 30 / 40 µm / 100 µm/yr / 300 µm | Rubert scale | yes |
+| Propeller Δη₀ table | (30, 0) … (10 000 µm, 0.222) | ITTC strip, 7.9 m 5-blade | yes (open item 6) |
+| Cleaning policies | proactive 20% then 6 mo; reactive 40% then 12 mo | GloFouling | |
+
+### Deviation: calcareous Q10
+
+The spec gives 2.3, derived from the calcareous **rating** `t0`. The calcareous rating is not
+used here: the spec excludes it from `FR_tot`, and calcareous fouling enters only through
+coverage. The model therefore fits Q10 to the **coverage logistic midpoints**, 393.12 d
+(equatorial, 25 °C) → 695.86 d (Mediterranean, 17 °C), which gives
+`Q10 = (695.86/393.12)^(10/8) = 2.0417`.
+
+## Double counting
+
+The penalty describes the modelled effect of fouling on a *modelled* clean-hull power. **It is
+never added on top of measured fuel**, which already contains the fouling. When the model feeds
+the ocean pipeline's modelled tier, the fleet-mean penalty must stay near the IMO estimate of
+7–9%. A materially higher fleet mean points to a calibration error, not a finding.
+
+## Reference outputs
+
+`cargo run -p nautilus-ocean --example fouling_scenario` gives these 5-year mean power factors
+for the GloFouling equatorial profile (176 m tanker, frictional share 0.5, 14 kn):
+
+| | none | reactive | proactive |
+|---|---|---|---|
+| Stage 1 | 1.513 | 1.229 | 1.101 |
+| Stage 2 | 1.738 | 1.306 | 1.152 |
+
+This profile is the GloFouling worst case: 25 °C all year and 30% idle time. It is not a fleet
+average.
+
+## Open items carried from the spec
+
+1. Uzun Eq. 4 calcareous coefficient; the evaluation point of the derivatives in Eqs. 6 and 8;
+   whether the fast equatorial logistic term is applied. *Resolve from the typeset article or
+   the Uzun PhD thesis.*
+2. Uzun test-site SSTs (17/25 °C are GloFouling's values). All the Q10 values derived here
+   depend on them.
+3. The roughness function and constant B used by Schultz 2007. These would confirm the
+   Nikuradse pairing.
+6. Farkas 2021 relation between k_s and Δη₀. It would give a better propeller observation than
+   the ITTC strip table.
+8. Growth of attached fouling while sailing (δ), and the barnacle growth rate k_B(T). This is
+   the largest structural uncertainty.
+9. Residual calcareous fraction ρ after in-water cleaning, and the size of coating damage.
+10. The rule for combining coating ΔC_F (ITTC) with fouling ΔC_F (Granville). The current sum
+    may double-count the as-applied roughness.
+11. Frictional share by ship type and Froude number.
