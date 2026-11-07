@@ -132,20 +132,19 @@ fn layer1(base: GuildParams) {
 }
 
 fn layer2(base: GuildParams) {
+    // One roughness scale λ fitted to both GloFouling sites at once.
     let set = |v: &[f64]| GuildParams {
-        high_coverage_slope: v[0],
+        roughness_scale: v[0],
         ..base
     };
-    let v = fit(
-        |v| (layer2_penalties(&set(v)).0 - 0.30).powi(2),
-        &[base.high_coverage_slope],
-        &[20.0],
-        2,
-        200,
-    );
+    let score = |v: &[f64]| {
+        let (eq, med) = layer2_penalties(&set(v));
+        (eq - 0.30).powi(2) + (med - 0.22).powi(2)
+    };
+    let v = fit(score, &[base.roughness_scale], &[0.2], 2, 200);
     let (eq, med) = layer2_penalties(&set(&v));
     println!(
-        "high_coverage_slope {:e}; equatorial {eq:.4} (0.30 ± 0.05), mediterranean {med:.4} (0.22 ± 0.05)",
+        "roughness_scale {:e}; equatorial {eq:.4} (0.30 ± 0.05), mediterranean {med:.4} (0.22 ± 0.05)",
         v[0]
     );
 }

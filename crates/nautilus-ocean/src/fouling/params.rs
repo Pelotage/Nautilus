@@ -323,9 +323,13 @@ pub struct GuildParams {
     /// has any die-off, so Layer 1 cannot identify it (a free fit ran to 200/day).
     /// Assumption — calibrate.
     pub weathering_per_day: f64,
-    /// Slope of the coverage-to-roughness mapping above 50 % coverage, µm per % (Uzun
-    /// Eq. 18 gives 80). Fitted (Layer 2).
+    /// Slope of the coverage-to-roughness mapping above 50 % coverage, µm per % (80, Uzun
+    /// Eq. 18). Kept at Uzun's value: Layer 2 showed the GloFouling gap is not mainly above
+    /// 50 % coverage.
     pub high_coverage_slope: f64,
+    /// Scale λ on all Uzun-derived fouling roughness above the clean 30 µm reference:
+    /// k_s = 30 + λ·(k_s,Uzun − 30). Fitted (Layer 2).
+    pub roughness_scale: f64,
     /// Paint roughness added per 100 % calcareous coverage scraped off by an in-water clean.
     /// Fitted (Layer 3).
     pub clean_damage: Micrometres,
@@ -418,6 +422,9 @@ impl Default for GuildParams {
             capacity_min: 10.0,
             weathering_per_day: 0.001,
             high_coverage_slope: 80.0,
+            // Layer 2 fit: examples/calibrate_fouling.rs layer2, 2026-11-07. 5-year mean hull
+            // penalty 0.330 equatorial (GloFouling 0.30) and 0.172 Mediterranean (0.22); limits ± 0.05.
+            roughness_scale: 5.190796405078837e-1,
             clean_damage: Micrometres(0.0),
             ahr_out_docking: Micrometres(120.0),
             ahr_drift_per_year: Micrometres(20.0),
@@ -490,6 +497,7 @@ impl GuildParams {
         check_positive(self.breeding_ramp.value(), "breeding_ramp")?;
         check_positive(self.food_half_saturation.value(), "food_half_saturation")?;
         check_fraction(self.spot_repair_recovery, "spot_repair_recovery")?;
+        check_positive(self.roughness_scale, "roughness_scale")?;
         for (v, what) in [
             (self.capacity_17, "capacity_17"),
             (self.capacity_25, "capacity_25"),
@@ -610,6 +618,14 @@ mod tests {
         }));
         assert!(bad(GuildParams {
             capacity_min: 0.0,
+            ..d
+        }));
+        assert!(bad(GuildParams {
+            roughness_scale: 0.0,
+            ..d
+        }));
+        assert!(bad(GuildParams {
+            roughness_scale: f64::NAN,
             ..d
         }));
     }

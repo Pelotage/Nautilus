@@ -296,8 +296,15 @@ layer's parameters.
 | Layer | Data | Fitted | Fixed | Pass criterion |
 |---|---|---|---|---|
 | 1 Growth | Uzun 2019 Tables 2–3, equatorial (25 °C) and Mediterranean (17 °C), idle at berth, 35 PSU, simulated day by day for 1,500 days | per class: s_ref, r_ref, Qs, Qr (warm guild); K17, K25, ω | guild windows, cold-guild peak rates, μ_max | worst-case gap at both sites: slime ≤ 1 point, soft ≤ 2 points, coverage ≤ 3 points |
-| 2 Roughness → power | GloFouling 2022 5-year penalties without cleaning (+30% equatorial, +22% Mediterranean); GloFouling profile; 176 m tanker, frictional share 0.5, 14 kn | slope a of ks_cov above 50% | Layer 1 | mean hull fouling fraction 0.30 ± 0.05 (equatorial) and 0.22 ± 0.05 (Mediterranean) |
+| 2 Roughness → power | GloFouling 2022 5-year penalties without cleaning (+30% equatorial, +22% Mediterranean); GloFouling profile; 176 m tanker, frictional share 0.5, 14 kn | roughness scale λ: k_s = 30 + λ·(k_s,Uzun − 30) (amended 2026-11-07, see note) | Layer 1 | mean hull fouling fraction 0.30 ± 0.05 (equatorial) and 0.22 ± 0.05 (Mediterranean) |
 | 3 Events | Adland dry-dock / in-water recovery ratio (about 2); Hundley destroyer sequence | κ | ρ = 0.2, Layers 1–2 | ratio in [1.6, 2.4] on the 3-year equatorial profile; Hundley pattern holds |
+
+**Layer 2 amendment (2026-11-07, agreed with the user).** The planned knob, the coverage slope
+above 50%, could not reach the equatorial target: 0.39 even at slope 0. The gap comes mainly
+from Uzun's rating-to-roughness mapping (rating 70 → 1 mm → 36% penalty), which applies before
+coverage passes 50%. Layer 2 therefore fits one scale λ on all Uzun-derived roughness, and the
+slope stays at Uzun's 80. The result is λ = 0.519, giving 0.330 equatorial and 0.172
+Mediterranean.
 
 **Tool.** `crates/nautilus-ocean/examples/calibrate_fouling.rs`:
 - runs the three layers with Nelder–Mead, using a fixed iteration count and fixed starting

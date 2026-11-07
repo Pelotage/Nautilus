@@ -15,7 +15,7 @@ mod common;
 
 use common::*;
 use nautilus_ocean::fouling::FoulingModel;
-use nautilus_ocean::fouling::calibration::layer1_gaps;
+use nautilus_ocean::fouling::calibration::{layer1_gaps, layer2_penalties};
 use nautilus_ocean::fouling::events::MaintenanceEvent;
 use nautilus_ocean::fouling::params::GuildParams;
 use nautilus_ocean::fouling::simulate::{CleaningPolicy, TimelineItem, simulate};
@@ -180,18 +180,16 @@ fn glofouling_five_year_penalty_exposure() {
     assert!(eq > med, "warm water must foul more");
 }
 
-/// Same GloFouling check for age-clock model: the Mediterranean value (0.228) agrees, but the
-/// equatorial one is 0.427 — 13 points above GloFouling's 30%, because Uzun's equatorial
-/// calcareous coverage reaches ~97% within 5 years of idle time and maps to ~10 mm roughness.
+/// Layer 2 (roughness → power) of the guild model: the 5-year mean hull fouling penalty
+/// without cleaning on the GloFouling profile is within 5 percentage points of GloFouling's
+/// +30 % (equatorial, 25 °C) and +22 % (Mediterranean, 17 °C), and warm water fouls more.
+/// Oracle: GloFouling 2022. Replaces the age-clock model's calibration target (0.43 vs 0.30).
 #[test]
-#[ignore = "calibration target: age-clock model equatorial 5-year penalty 0.43 vs GloFouling 0.30"]
-fn glofouling_five_year_penalty_age_clock() {
-    let (eq, med) = (
-        five_year_mean_hull(age_clock(), 25.0),
-        five_year_mean_hull(age_clock(), 17.0),
-    );
-    assert!((med - 0.22).abs() <= 0.05, "mediterranean {med}");
+fn guild_layer2_glofouling_five_year_penalties() {
+    let (eq, med) = layer2_penalties(&GuildParams::default());
     assert!((eq - 0.30).abs() <= 0.05, "equatorial {eq}");
+    assert!((med - 0.22).abs() <= 0.05, "mediterranean {med}");
+    assert!(eq > med);
 }
 
 /// Penalty recovered by an event after 1100 days on the equatorial profile.

@@ -40,7 +40,8 @@ use super::events::MaintenanceEvent;
 use super::integrate;
 use super::params::{COLD, CoatingType, GuildParams, WARM};
 use super::power::{
-    PowerPenalty, coating_resistance_fraction, fouling_resistance_fraction, propeller_eta_loss,
+    PowerPenalty, REFERENCE_KS, coating_resistance_fraction, fouling_resistance_fraction,
+    propeller_eta_loss,
 };
 use super::uzun::{ks_from_coverage, ks_from_rating};
 use super::{FoulingError, FoulingModel, OperatingPoint};
@@ -126,15 +127,16 @@ impl GuildModel {
     /// Hull roughness: the larger of the rating and coverage roughness.
     pub fn hull_ks(&self) -> Micrometres {
         let rating = ks_from_rating(self.slime_rating() + self.soft_rating());
-        match self.coverage_ks(self.calcareous_coverage()) {
+        let uzun = match self.coverage_ks(self.calcareous_coverage()) {
             Some(k) if k.value() > rating.value() => k,
             _ => rating,
-        }
+        };
+        self.scaled(uzun)
     }
     /// Propeller roughness: the larger of drift roughness and blade-shell roughness.
     pub fn prop_ks(&self) -> Micrometres {
         let shells = self.x[ix::PROP_CALC[0]] + self.x[ix::PROP_CALC[1]] + self.x[ix::PROP_DEAD];
-        match self.coverage_ks(shells) {
+        match self.coverage_ks(shells).map(|k| self.scaled(k)) {
             Some(k) if k.value() > self.prop_rough => k,
             _ => Micrometres(self.prop_rough),
         }
@@ -154,6 +156,14 @@ impl GuildModel {
             soft: self.x[ix::SOFT[i]],
             live_coverage: self.x[ix::CALC[i]],
         }
+    }
+
+    /// Applies the Layer 2 roughness scale: 30 µm + λ·(k_s − 30 µm).
+    fn scaled(&self, ks: Micrometres) -> Micrometres {
+        Micrometres(
+            REFERENCE_KS.value()
+                + self.params.roughness_scale * (ks.value() - REFERENCE_KS.value()),
+        )
     }
 
     /// Coverage roughness: Uzun Eq. 18 up to 50 % coverage, then continued linearly with the
@@ -529,5 +539,30 @@ mod tests {
                 );
             }
         }
+    }
+    /// Layer 2's roughness scale λ shrinks every Uzun-derived roughness toward the clean 30 µm
+    /// reference: k_s = 30 + λ·(k_s,Uzun − 30) on the hull and the blade shells. Propeller drift
+    /// roughness is not scaled, and a clean hull stays at exactly 30 µm.
+    #[test]
+    fn roughness_scale_applies_above_reference() {
+        let full = GuildModel::new(GuildParams {
+            roughness_scale: 1.0,
+            ..GuildParams::default()
+        })
+        .unwrap();
+        let half = GuildModel::new(GuildParams {
+            roughness_scale: 0.5,
+            ..GuildParams::default()
+        })
+        .unwrap();
+        assert_eq!(half.hull_ks(), Micrometres(30.0));
+        let (mut a, mut b) = (full, half);
+        for s in [&mut a, &mut b] {
+            s.advance(&idle(500.0, 28.0));
+        }
+        assert!((b.hull_ks().value() - (30.0 + 0.5 * (a.hull_ks().value() - 30.0))).abs() < 1e-9);
+        a.apply(MaintenanceEvent::PropellerPolish);
+        b.apply(MaintenanceEvent::PropellerPolish);
+        assert_eq!(a.prop_ks(), b.prop_ks()); // drift roughness only: unscaled
     }
 }
